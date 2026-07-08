@@ -11,10 +11,15 @@ is **opt-in** via the Config UI (default off) so existing users see no behavior 
 
 Four features, in priority order:
 
-1. **Cook-done doorbell** (with the interior-camera snapshot attached to the notification)
-2. **Interior camera** (snapshot-only, refreshed periodically to look live)
+1. **Cook-done doorbell** — ships now as a plain Doorbell (no camera), architected to become a
+   Video Doorbell later once the snapshot works. Offered as an option alongside the existing
+   ready/done sensors; users can enable either, both, or neither.
+2. **Interior camera** (snapshot-only, refreshed periodically to look live) — later, gated on Spike A.
 3. **Food probe temperature sensors**
 4. **Config-driven cook-mode switches**
+
+Also in scope: a short **README section documenting why timer and cook-progress % are not
+exposed** (see Out of scope) so the omission is intentional and discoverable, not a gap.
 
 ## Source of truth
 
@@ -60,33 +65,39 @@ Store builds), so that captured research is authoritative.
 
 Features 3 and 4 can begin in parallel with Spike A; feature 4 needs no spike.
 
-## Feature 1 — Cook-done doorbell (Video Doorbell accessory)
+## Feature 1 — Cook-done doorbell
 
-A single accessory combining a **Doorbell** service and a **Camera** service (feature 2). The
-combination is deliberate: HomeKit attaches the linked camera's snapshot to the doorbell's rich
-notification, which is what delivers "a photo of your finished food" to the phone and Apple TV.
+A **Doorbell** accessory that fires a `ProgrammableSwitchEvent` (single-press) when a configured
+trigger occurs, producing a HomeKit doorbell notification on phone + Apple TV. It ships **now as a
+plain doorbell (no camera)** — the notification is an image-less banner, zero ffmpeg, no
+dependency on any spike. It is offered as an option **alongside** the existing ready/done
+occupancy sensors; users can enable either, both, or neither.
 
-- The Doorbell service exposes a `ProgrammableSwitchEvent` fired as **single-press** when a
-  configured trigger occurs.
 - Triggers are **configurable** (all default off):
   - `done` — the cook-complete transition the client already computes (`JuneTelemetry.done`).
   - `ready` — preheat-complete / ready-to-load (`JuneTelemetry.ready`).
   - `doorOpen` — **tentative**; wired behind config but only functional if Spike C confirms a
     signal. If no signal is available it simply never fires; documented as such.
-- Before Spike A lands, the accessory is a Doorbell with no usable camera snapshot. Options for
-  that interim: ship the doorbell as a plain Doorbell (no camera) and upgrade it to a Video
-  Doorbell once the snapshot works, OR gate the whole accessory behind Spike A. **Decision: gate
-  the Video Doorbell behind Spike A** so we never expose a broken camera tile; the plain
-  ready/done occupancy sensors already cover notifications in the meantime.
+- Config (per oven): `doorbell` object — `enabled` (bool, default false), `triggers` (object with
+  `done`/`ready`/`doorOpen` booleans, all default false), `name`.
 
-Config (per oven): `doorbell` object — `enabled` (bool, default false), `triggers` (object with
-`done`/`ready`/`doorOpen` booleans, all default false), `name`.
+**Architected for a later Video Doorbell.** The accessory is structured so that when feature 2's
+snapshot camera lands (post Spike A) and the user enables the camera, a Camera service is attached
+to this same accessory — turning it into a Video Doorbell whose notification carries the JPEG food
+photo — without restructuring or re-pairing. Enabling the camera is what promotes plain →
+video; the doorbell itself never needs Spike A.
 
 ## Feature 2 — Interior camera (snapshot-only)
 
-A Camera service whose `handleSnapshotRequest` returns the latest interior still as a JPEG.
-Explicitly **no live H.264 stream and no HKSV** — HomeKit re-requests the snapshot periodically,
-which is enough to "look live" per the user. Streaming/recording are out of scope.
+A Camera service whose `handleSnapshotRequest` returns the latest interior still as a JPEG. The
+JPEG snapshot is the real feature: it drives the camera tile preview and the food photo in the
+doorbell's rich notification. **No real video capture and no HKSV.**
+
+HomeKit API constraint: hap-nodejs's `CameraController` cannot be registered snapshot-only — it
+requires a streaming delegate (`handleStreamRequest`). We satisfy this with a **minimal
+ffmpeg-from-still stub**: when the user taps the tile to "go live," ffmpeg loops the latest JPEG
+into an H.264 stream. This is the only place ffmpeg runs; the still refreshes so it looks live.
+There is deliberately no continuous/HKSV recording.
 
 - Snapshot source: the URL learned from Spike A's `10011` frame. The client keeps the most recent
   signed still URL from the telemetry stream; the snapshot handler fetches it (with a short cache
@@ -132,8 +143,9 @@ mode list can't be predicted or enumerated from the capture.
 - `src/june-client.ts`: extend `JuneTelemetry` with probe fields, latest-snapshot-URL state, and
   a `ready`-distinct `preheatComplete` if needed; parse probe + camera fields in `handleMessage`;
   expose a `startMode(primitiveType, tempF)` helper for mode switches.
-- `src/accessories/`: new `video-doorbell.ts` (Doorbell + Camera), `probe-sensor.ts`,
-  `mode-switch.ts`. Existing `thermostat.ts`, `preheat-switch.ts`, `sensors.ts` unchanged.
+- `src/accessories/`: new `doorbell.ts` (Doorbell service now; attaches a Camera service later
+  when the camera is enabled, becoming a Video Doorbell), `probe-sensor.ts`, `mode-switch.ts`.
+  Existing `thermostat.ts`, `preheat-switch.ts`, `sensors.ts` unchanged.
 - `src/platform.ts`: construct the new opt-in accessories based on config.
 - `config.schema.json`: add `doorbell`, `camera`, `probeSensors`, `modes` per-oven properties and
   form entries; all new toggles default false.
@@ -144,6 +156,11 @@ mode list can't be predicted or enumerated from the capture.
 - Live H.264/HLS streaming.
 - Timer as a HomeKit control (command exists; no natural HomeKit surface — revisit later).
 - Cook progress % as a dedicated characteristic (no native HomeKit type; used internally only).
+
+Both of these get a short **README section** explaining the omission: the `11006` set-timer
+command works but HomeKit has no timer/countdown surface for a thermostat-style accessory, and
+cook progress has no native HomeKit characteristic (so it is only used internally to derive
+ready/done). This is a documentation deliverable of this work, not a code feature.
 
 ## Open risks
 
