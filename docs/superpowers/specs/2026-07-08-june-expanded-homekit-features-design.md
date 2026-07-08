@@ -14,7 +14,8 @@ Four features, in priority order:
 1. **Cook-done doorbell** — ships now as a plain Doorbell (no camera), architected to become a
    Video Doorbell later once the snapshot works. Offered as an option alongside the existing
    ready/done sensors; users can enable either, both, or neither.
-2. **Interior camera** (snapshot-only, refreshed periodically to look live) — later, gated on Spike A.
+2. **Interior camera** (snapshot + ffmpeg live view) — BUILT. Spike A solved; snapshot verified
+   live end-to-end. Combines with the doorbell into a Video Doorbell.
 3. **Food probe temperature sensors**
 4. **Config-driven cook-mode switches**
 
