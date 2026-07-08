@@ -66,6 +66,46 @@
                 { "title": "Celsius", "enum": ["C"] }
               ]
             },
+            "doorbell": {
+              "title": "Cook Doorbell",
+              "type": "object",
+              "properties": {
+                "enabled": { "title": "Enable Doorbell", "type": "boolean", "default": false },
+                "name": { "title": "Doorbell Name", "type": "string", "default": "June Doorbell" },
+                "triggers": {
+                  "type": "object",
+                  "properties": {
+                    "done": { "title": "Ring when cook is done", "type": "boolean", "default": false },
+                    "ready": { "title": "Ring when preheat/ready", "type": "boolean", "default": false },
+                    "doorOpen": { "title": "Ring on door open (not yet supported)", "type": "boolean", "default": false }
+                  }
+                }
+              }
+            },
+            "probeSensors": {
+              "title": "Food Probe Temperature Sensors",
+              "type": "object",
+              "properties": {
+                "enabled": { "title": "Enable Probe Sensors", "type": "boolean", "default": false },
+                "leftName": { "title": "Left Probe Name", "type": "string", "default": "Left Probe" },
+                "rightName": { "title": "Right Probe Name", "type": "string", "default": "Right Probe" }
+              }
+            },
+            "modes": {
+              "title": "Cook Mode Switches",
+              "type": "array",
+              "default": [],
+              "description": "Add a switch for each cook mode you want. primitiveType is the June mode id (e.g. bake, roast, broil, air_fry, toast) — you can enter any value the oven supports.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": { "title": "Switch Name", "type": "string" },
+                  "primitiveType": { "title": "June Mode (primitive_type)", "type": "string" },
+                  "tempF": { "title": "Temperature (F)", "type": "integer", "default": 350, "minimum": 100, "maximum": 550 }
+                },
+                "required": ["primitiveType"]
+              }
+            },
             "ovenId": { "type": "string", "hidden": true },
             "deviceId": { "type": "string", "hidden": true },
             "deviceName": { "type": "string", "hidden": true },
@@ -92,7 +132,16 @@
         "ovens[].doneSensor",
         "ovens[].defaultMode",
         "ovens[].defaultTempF",
-        "ovens[].tempUnit"
+        "ovens[].tempUnit",
+        "ovens[].doorbell.enabled",
+        "ovens[].doorbell.name",
+        "ovens[].doorbell.triggers.done",
+        "ovens[].doorbell.triggers.ready",
+        "ovens[].doorbell.triggers.doorOpen",
+        "ovens[].probeSensors.enabled",
+        "ovens[].probeSensors.leftName",
+        "ovens[].probeSensors.rightName",
+        { "key": "ovens[].modes", "type": "array", "items": ["ovens[].modes[].label", "ovens[].modes[].primitiveType", "ovens[].modes[].tempF"] }
       ]
     }
   ]
