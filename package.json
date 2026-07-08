@@ -1,6 +1,6 @@
 {
   "name": "homebridge-june-oven",
-  "version": "0.1.0",
+  "version": "0.1.1-beta.0",
   "description": "Homebridge dynamic platform plugin for June ovens with in-plugin PIN pairing.",
   "license": "MIT",
   "author": "Keith Herrington (https://github.com/keithah)",
