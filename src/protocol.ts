@@ -12,6 +12,24 @@ export const MC_TEMP = 11005;
 export const MC_CANCEL = 11004;
 export const MC_KEEPALIVE = 11011;
 
+export interface JuneModeConfig {
+  label: string;
+  primitiveType: string;
+  tempF: number;
+}
+
+export interface JuneDoorbellConfig {
+  enabled: boolean;
+  name: string;
+  triggers: { done: boolean; ready: boolean; doorOpen: boolean };
+}
+
+export interface JuneProbeSensorsConfig {
+  enabled: boolean;
+  leftName: string;
+  rightName: string;
+}
+
 export interface JuneOvenConfig {
   name?: string;
   preheatSwitchName?: string;
@@ -20,6 +38,9 @@ export interface JuneOvenConfig {
   defaultMode?: string;
   defaultTempF?: number;
   tempUnit?: 'F' | 'C';
+  doorbell?: Partial<Omit<JuneDoorbellConfig, 'triggers'>> & { triggers?: Partial<JuneDoorbellConfig['triggers']> };
+  modes?: JuneModeConfig[];
+  probeSensors?: Partial<JuneProbeSensorsConfig>;
   ovenId: string;
   deviceId: string;
   deviceName: string;
@@ -39,6 +60,9 @@ export interface NormalizedJuneConfig extends JuneOvenConfig {
   defaultMode: string;
   defaultTempF: number;
   tempUnit: 'F' | 'C';
+  doorbell: JuneDoorbellConfig;
+  modes: JuneModeConfig[];
+  probeSensors: JuneProbeSensorsConfig;
   accessToken: string;
   refreshToken: string;
   clientId: string;
@@ -76,6 +100,23 @@ export function normalizeOvenConfig(config: JuneOvenConfig): NormalizedJuneConfi
     baseUrl: config.baseUrl || JUNE_API_URL,
     messagingUrl: config.messagingUrl || JUNE_MESSAGING_URL,
     wsUrl: config.wsUrl || JUNE_WS_URL,
+    doorbell: {
+      enabled: config.doorbell?.enabled ?? false,
+      name: config.doorbell?.name || 'June Doorbell',
+      triggers: {
+        done: config.doorbell?.triggers?.done ?? false,
+        ready: config.doorbell?.triggers?.ready ?? false,
+        doorOpen: config.doorbell?.triggers?.doorOpen ?? false,
+      },
+    },
+    modes: (config.modes ?? [])
+      .filter(m => m && typeof m.primitiveType === 'string' && m.primitiveType.length > 0)
+      .map(m => ({ label: m.label || m.primitiveType, primitiveType: m.primitiveType, tempF: m.tempF ?? 350 })),
+    probeSensors: {
+      enabled: config.probeSensors?.enabled ?? false,
+      leftName: config.probeSensors?.leftName || 'Left Probe',
+      rightName: config.probeSensors?.rightName || 'Right Probe',
+    },
   };
 }
 
