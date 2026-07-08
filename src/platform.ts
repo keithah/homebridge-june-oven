@@ -13,13 +13,16 @@ import { JuneClient } from './june-client';
 import { JuneThermostatAccessory } from './accessories/thermostat';
 import { JunePreheatSwitchAccessory } from './accessories/preheat-switch';
 import { JuneOccupancySensorAccessory } from './accessories/sensors';
+import { JuneDoorbellAccessory } from './accessories/doorbell';
+import { JuneModeSwitchAccessory } from './accessories/mode-switch';
+import { JuneProbeSensorAccessory } from './accessories/probe-sensor';
 
 export interface JunePlatformConfig extends PlatformConfig {
   name?: string;
   ovens?: JuneOvenConfig[];
 }
 
-type AccessoryKind = 'thermostat' | 'preheat' | 'ready' | 'done';
+type AccessoryKind = 'thermostat' | 'preheat' | 'ready' | 'done' | 'doorbell' | 'modes' | 'probes';
 
 export class JunePlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service;
@@ -65,6 +68,15 @@ export class JunePlatform implements DynamicPlatformPlugin {
       if (oven.doneSensor !== false) {
         this.bindAccessory(client, 'done', `${oven.name || 'June'} Done`, wanted);
       }
+      if (client.config.doorbell.enabled) {
+        this.bindAccessory(client, 'doorbell', client.config.doorbell.name, wanted);
+      }
+      if (client.config.modes.length > 0) {
+        this.bindAccessory(client, 'modes', `${oven.name || 'June'} Modes`, wanted);
+      }
+      if (client.config.probeSensors.enabled) {
+        this.bindAccessory(client, 'probes', `${oven.name || 'June'} Probes`, wanted);
+      }
       client.start().catch(error => this.log.error(`Failed to start ${oven.name || oven.ovenId}: ${error.message}`));
     }
     const stale = [...this.accessories.values()].filter(accessory => !wanted.has(accessory.UUID));
@@ -89,6 +101,12 @@ export class JunePlatform implements DynamicPlatformPlugin {
       new JuneThermostatAccessory(this, accessory, client);
     } else if (kind === 'preheat') {
       new JunePreheatSwitchAccessory(this, accessory, client);
+    } else if (kind === 'doorbell') {
+      new JuneDoorbellAccessory(this, accessory, client);
+    } else if (kind === 'modes') {
+      new JuneModeSwitchAccessory(this, accessory, client);
+    } else if (kind === 'probes') {
+      new JuneProbeSensorAccessory(this, accessory, client);
     } else {
       new JuneOccupancySensorAccessory(this, accessory, client, kind);
     }
