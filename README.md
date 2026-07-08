@@ -26,7 +26,7 @@ A [Homebridge](https://homebridge.io) plugin that brings [June](https://juneoven
 ## Requirements
 
 - Homebridge `>=1.8.0`
-- Node.js `18.20.4+`, `20.15.1+`, or `22+`
+- Node.js `18.20.4+`, `20.15.1+`, `22+`, or `24+`
 - A June oven on the same June account you'll pair with
 
 ## Install
