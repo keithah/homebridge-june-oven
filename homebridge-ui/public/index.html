@@ -41,11 +41,26 @@
     display: block;
     margin-top: 0.25rem;
   }
+
+  .june-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .june-header img {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+  }
 </style>
 
 <div class="june-shell">
   <div>
-    <h4 class="mb-2">June Oven Pairing</h4>
+    <div class="june-header mb-2">
+      <img src="icon.png" alt="">
+      <h4 class="mb-0">June Oven Pairing</h4>
+    </div>
     <p class="june-muted mb-3">This plugin pairs directly with your oven over June's cloud — you don't need the June phone app. Click below to start; instructions appear once pairing begins.</p>
     <button id="pairButton" class="btn btn-primary">Pair a new June oven</button>
   </div>

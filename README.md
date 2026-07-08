@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="branding/icon.png" width="110" alt="June">
+</p>
+
 # homebridge-june-oven
 
 [![npm](https://img.shields.io/npm/v/homebridge-june-oven?label=npm)](https://www.npmjs.com/package/homebridge-june-oven)
