@@ -18,10 +18,19 @@ A [Homebridge](https://homebridge.io) plugin that brings [June](https://juneoven
 - **Thermostat accessory** (`June` by default) — set a target temperature, read the current cavity temperature, turn off to cancel a cook.
 - **Optional preheat switch** (`June Preheat`) — turning it on preheats to your configured default mode/temperature; turning it off cancels.
 - **Optional `June Ready` / `June Done` occupancy sensors** — see [Ready and Done sensors](#ready-and-done-sensors) below for what they do and how to hook up notifications.
+- **Optional cook doorbell** — a HomeKit Doorbell that rings on the events you choose (cook done and/or preheat-ready), giving you a doorbell-style notification on your phone and Apple TV. Off by default; enable and pick triggers in the Config UI.
+- **Optional food-probe temperature sensors** — exposes the oven's meat-probe temperature(s) as HomeKit Temperature Sensors so you can automate on "probe reached 145°F." Off by default.
+- **Optional cook-mode switches** — add a switch for any cook mode you like (bake, roast, broil, air fry, toast, or any other mode id the oven accepts), each with its own temperature. Turning one on starts that cook; they're mutually exclusive. None are added unless you configure them.
 - **In-plugin pairing** — pair from the Config UI with an 8-digit code, the same flow the June app uses. No account credentials are ever entered into or stored by the plugin.
 - **Editable per-oven settings in the Config UI** — rename accessories, toggle sensors, set default cook mode/temperature (in whichever unit you prefer), and check an oven's live connection status, all without hand-editing `config.json`.
 - **Automatic token refresh** and a persistent, signed WebSocket connection to June's messaging service for live status and commands.
 - **Multi-oven support.**
+
+## Not exposed (and why)
+
+- **Cook timer** — the oven accepts a set-timer command, but HomeKit has no timer/countdown surface for a thermostat-style accessory, so there's nowhere sensible to put it. Use a Home automation on the Done doorbell/sensor instead.
+- **Cook progress %** — HomeKit has no native "percent complete" characteristic, so progress is used internally only (to drive the Ready/Done triggers) rather than shown as its own tile.
+- **Interior camera / live video** — the oven has an interior camera, but wiring its snapshot into a HomeKit camera (and a Video Doorbell that shows a photo of your food when it's done) needs one more protocol capture to confirm how the current image URL is delivered. It's planned; the doorbell above is already built to gain the snapshot once that lands. See `docs/superpowers/specs/2026-07-08-june-expanded-homekit-features-design.md`.
 
 ## Requirements
 
