@@ -12,7 +12,7 @@ jobs:
     strategy:
       matrix:
         # Every Node version this plugin's engines field supports.
-        node-version: [18.20.4, 20.15.1, 22, 24]
+        node-version: [18.20.4, 20.19.0, 22.12.0, 24]
     steps:
       - uses: actions/checkout@v4
 
@@ -29,9 +29,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # vitest 4 requires Node >=20, so unit tests skip the Node 18 lane;
-        # the build job above still verifies the plugin compiles there.
-        node-version: [20.15.1, 22, 24]
+        # vitest 4 (via vite/rolldown) requires Node >=20.19 / >=22.12, so
+        # unit tests skip the Node 18 lane; the build job above still
+        # verifies the plugin compiles there.
+        node-version: [20.19.0, 22.12.0, 24]
     steps:
       - uses: actions/checkout@v4
 
