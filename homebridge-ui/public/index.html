@@ -4,6 +4,15 @@
     gap: 1rem;
   }
 
+  /* Bootstrap's .text-muted is unreadable against Homebridge UI's dark theme
+     (the custom-ui iframe doesn't reliably inherit the parent's dark-mode
+     overrides). Dim relative to the inherited text color instead, so it
+     stays legible in both themes. */
+  .june-muted {
+    color: inherit;
+    opacity: 0.7;
+  }
+
   .june-code {
     font-size: 2.2rem;
     font-weight: 700;
@@ -23,26 +32,45 @@
   .june-oven-card .form-check {
     margin-bottom: 0.5rem;
   }
+
+  .june-status-line {
+    min-height: 1.25rem;
+  }
+
+  .june-help {
+    display: block;
+    margin-top: 0.25rem;
+  }
 </style>
 
 <div class="june-shell">
   <div>
     <h4 class="mb-2">June Oven Pairing</h4>
-    <p class="text-muted mb-3">Pair a June oven directly from Homebridge. The oven must be idle, closed, online, and ready for a new companion code.</p>
+    <p class="june-muted mb-3">This plugin pairs directly with your oven over June's cloud — you don't need the June phone app. Click below to start; instructions appear once pairing begins.</p>
     <button id="pairButton" class="btn btn-primary">Pair a new June oven</button>
   </div>
 
   <div id="pairCard" class="card d-none">
     <div class="card-body">
-      <div class="text-muted mb-1">On your oven, open Settings -> Connect and enter:</div>
+      <ol class="june-muted mb-3">
+        <li>On the oven's touchscreen, swipe left twice from the home screen and select <strong>Connect</strong>. If the oven already shows a list of connected devices instead of a code, tap <strong>+</strong> to add a new device.</li>
+        <li>Type the code below into the oven's screen.</li>
+        <li>Wait for this page to report <strong>Paired</strong>, then restart Homebridge.</li>
+      </ol>
+      <p class="june-muted mb-3">
+        If the oven's screen doesn't match this, June's own walkthrough for the same flow may help:
+        <a href="https://consumer-care.weber.com/s/article/Pairing-the-June-App-with-Your-Oven-1724960264554?language=en_US" target="_blank" rel="noopener">June app pairing guide</a>.
+      </p>
+      <div class="june-muted mb-1">Enter this code on the oven:</div>
       <div id="pairCode" class="june-code mb-2"></div>
-      <div id="pairState" class="text-muted">Waiting for the oven...</div>
+      <div id="pairState" class="june-muted">Waiting for the oven...</div>
     </div>
   </div>
 
   <div>
     <h5 class="mb-2">Paired ovens</h5>
-    <div id="ovenList" class="june-oven-list text-muted">Loading...</div>
+    <div id="duplicateWarning" class="alert alert-warning d-none" role="alert"></div>
+    <div id="ovenList" class="june-oven-list june-muted">Loading...</div>
   </div>
 </div>
 
@@ -52,6 +80,7 @@
   const pairCode = document.getElementById('pairCode');
   const pairState = document.getElementById('pairState');
   const ovenList = document.getElementById('ovenList');
+  const duplicateWarning = document.getElementById('duplicateWarning');
   let currentConfig = [];
   let pollTimer;
 
@@ -75,62 +104,107 @@
     const ovens = currentConfig[0].ovens || [];
     if (!ovens.length) {
       ovenList.innerHTML = '<span>No ovens paired yet.</span>';
+      duplicateWarning.classList.add('d-none');
       return;
     }
     ovenList.innerHTML = ovens.map((oven, index) => ovenCardHtml(oven, index)).join('');
     ovens.forEach((oven, index) => bindOvenCard(index));
+    checkDuplicateNames();
+  }
+
+  function checkDuplicateNames() {
+    const ovens = currentConfig[0].ovens || [];
+    const seen = new Map();
+    const duplicates = new Set();
+    for (const oven of ovens) {
+      for (const label of [oven.name || 'June', oven.preheatSwitchName].filter(Boolean)) {
+        if (seen.has(label)) {
+          duplicates.add(label);
+        }
+        seen.set(label, true);
+      }
+    }
+    if (duplicates.size) {
+      duplicateWarning.textContent = `These accessory names are used more than once, which will create ambiguous HomeKit accessories: ${[...duplicates].join(', ')}. Give each oven's thermostat and preheat switch a unique name.`;
+      duplicateWarning.classList.remove('d-none');
+    } else {
+      duplicateWarning.classList.add('d-none');
+    }
+  }
+
+  function fahrenheitToCelsius(f) {
+    return Math.round((f - 32) * 5 / 9);
+  }
+
+  function celsiusToFahrenheit(c) {
+    return Math.round(c * 9 / 5 + 32);
   }
 
   function ovenCardHtml(oven, index) {
     const modeOptions = MODES.map(mode =>
       `<option value="${mode.value}"${oven.defaultMode === mode.value ? ' selected' : ''}>${mode.label}</option>`,
     ).join('');
+    const unit = oven.tempUnit === 'C' ? 'C' : 'F';
+    const defaultTempF = oven.defaultTempF ?? 350;
+    const tempValue = unit === 'C' ? fahrenheitToCelsius(defaultTempF) : defaultTempF;
+    const tempMin = unit === 'C' ? 38 : 100;
+    const tempMax = unit === 'C' ? 260 : 500;
     return `
       <div class="card june-oven-card" data-index="${index}">
         <div class="card-body">
           <div class="d-flex justify-content-between align-items-start mb-2">
             <strong>${escapeHtml(oven.name || 'June')}</strong>
-            <button class="btn btn-sm btn-outline-danger remove-oven" data-index="${index}" type="button">Remove</button>
+            <div>
+              <button class="btn btn-sm btn-outline-secondary check-status" type="button">Check status</button>
+              <button class="btn btn-sm btn-outline-danger remove-oven" data-index="${index}" type="button">Remove</button>
+            </div>
           </div>
-          <div class="small text-muted mb-3">Oven ID: ${escapeHtml(oven.ovenId || '')}</div>
+          <div class="small june-muted mb-1">Oven ID: ${escapeHtml(oven.ovenId || '')}</div>
+          <div class="small status-line june-status-line mb-3">&nbsp;</div>
 
           <div class="form-group">
             <label>Thermostat Name</label>
             <input type="text" class="form-control field-name" value="${escapeHtml(oven.name || 'June')}">
+            <small class="form-text june-muted june-help">Name of the HomeKit thermostat accessory. This is what Siri and the Home app call this oven (e.g. "Set ${escapeHtml(oven.name || 'June')} to 375").</small>
           </div>
 
           <div class="form-group">
             <label>Preheat Switch Name</label>
             <input type="text" class="form-control field-preheatSwitchName" value="${escapeHtml(oven.preheatSwitchName ?? 'June Preheat')}" placeholder="Leave blank to disable">
-            <small class="form-text text-muted">Leave blank to disable the preheat switch.</small>
+            <small class="form-text june-muted june-help">Adds a separate HomeKit switch. Turning it on preheats using the mode/temp below; turning it off cancels. Leave blank to not create this switch.</small>
           </div>
 
           <div class="form-check">
             <input type="checkbox" class="form-check-input field-readySensor" ${oven.readySensor !== false ? 'checked' : ''}>
             <label class="form-check-label">Ready sensor</label>
           </div>
+          <small class="form-text june-muted june-help mb-2">Adds a HomeKit Occupancy Sensor named "${escapeHtml(oven.name || 'June')} Ready". It trips ("Occupancy Detected") once the oven finishes preheating, and resets itself after 30 seconds. Turn on notifications for it in the Home app to get a "preheat done" alert.</small>
 
           <div class="form-check">
             <input type="checkbox" class="form-check-input field-doneSensor" ${oven.doneSensor !== false ? 'checked' : ''}>
             <label class="form-check-label">Done sensor</label>
           </div>
+          <small class="form-text june-muted june-help mb-3">Adds a HomeKit Occupancy Sensor named "${escapeHtml(oven.name || 'June')} Done". It trips when a running cook finishes on its own (not when you cancel it), and resets itself after 30 seconds. Turn on notifications for it in the Home app to get a "cook finished" alert.</small>
+
+          <div class="form-group">
+            <label>Temperature Units</label>
+            <select class="form-control field-tempUnit">
+              <option value="F"${unit === 'F' ? ' selected' : ''}>Fahrenheit</option>
+              <option value="C"${unit === 'C' ? ' selected' : ''}>Celsius</option>
+            </select>
+            <small class="form-text june-muted june-help">Only changes how the default preheat temperature below is entered/displayed here.</small>
+          </div>
 
           <div class="form-group">
             <label>Default Cook Mode</label>
             <select class="form-control field-defaultMode">${modeOptions}</select>
+            <small class="form-text june-muted june-help">Mode used when the preheat switch above is turned on.</small>
           </div>
 
           <div class="form-group">
-            <label>Default Preheat Temp (F)</label>
-            <input type="number" class="form-control field-defaultTempF" min="100" max="500" value="${oven.defaultTempF ?? 350}">
-          </div>
-
-          <div class="form-group">
-            <label>Display Units</label>
-            <select class="form-control field-tempUnit">
-              <option value="F"${(oven.tempUnit || 'F') === 'F' ? ' selected' : ''}>Fahrenheit</option>
-              <option value="C"${oven.tempUnit === 'C' ? ' selected' : ''}>Celsius</option>
-            </select>
+            <label>Default Preheat Temp (&deg;${unit})</label>
+            <input type="number" class="form-control field-defaultTempF" min="${tempMin}" max="${tempMax}" value="${tempValue}">
+            <small class="form-text june-muted june-help">Temperature the preheat switch above targets. Setting the thermostat's target temperature directly in the Home app works independently of this.</small>
           </div>
         </div>
       </div>`;
@@ -146,32 +220,78 @@
       ['.field-readySensor', 'readySensor', 'checked'],
       ['.field-doneSensor', 'doneSensor', 'checked'],
       ['.field-defaultMode', 'defaultMode', 'value'],
-      ['.field-tempUnit', 'tempUnit', 'value'],
     ];
     for (const [selector, key, prop] of bindings) {
       const el = card.querySelector(selector);
       el.addEventListener('change', () => updateOven(index, key, prop === 'checked' ? el.checked : el.value));
     }
 
+    card.querySelector('.field-tempUnit').addEventListener('change', event => {
+      updateOven(index, 'tempUnit', event.target.value, { rerender: true });
+    });
+
     const tempEl = card.querySelector('.field-defaultTempF');
-    tempEl.addEventListener('change', () => updateOven(index, 'defaultTempF', Number(tempEl.value) || 350));
+    tempEl.addEventListener('change', () => {
+      const unit = currentConfig[0].ovens[index].tempUnit === 'C' ? 'C' : 'F';
+      const entered = Number(tempEl.value);
+      const defaultTempF = unit === 'C' ? celsiusToFahrenheit(entered) : entered;
+      updateOven(index, 'defaultTempF', Number.isFinite(defaultTempF) ? defaultTempF : 350);
+    });
 
     card.querySelector('.remove-oven').addEventListener('click', () => removeOven(index));
+    card.querySelector('.check-status').addEventListener('click', () => checkStatus(index));
   }
 
-  async function updateOven(index, key, value) {
+  async function updateOven(index, key, value, { rerender } = {}) {
     const ovens = currentConfig[0].ovens;
     ovens[index] = { ...ovens[index], [key]: value };
     await homebridge.updatePluginConfig(currentConfig);
     await homebridge.savePluginConfig();
-    if (key === 'name') {
+    if (key === 'name' || rerender) {
       renderOvens();
+    } else {
+      checkDuplicateNames();
+    }
+  }
+
+  async function checkStatus(index) {
+    const card = ovenList.querySelector(`.june-oven-card[data-index="${index}"]`);
+    const statusLine = card.querySelector('.status-line');
+    const button = card.querySelector('.check-status');
+    button.disabled = true;
+    statusLine.textContent = 'Checking...';
+    try {
+      const result = await homebridge.request('/oven/status', { oven: currentConfig[0].ovens[index] });
+      const t = result.telemetry || {};
+      const parts = [];
+      parts.push(t.connectionState ? `Connection: ${t.connectionState}` : 'Connection: unknown');
+      parts.push(t.active ? 'Cooking/preheating' : 'Idle');
+      if (typeof t.targetTempC === 'number') {
+        parts.push(`Target ${Math.round(t.targetTempC * 9 / 5 + 32)}°F`);
+      }
+      statusLine.textContent = parts.join(' · ');
+      if (result.accessToken) {
+        currentConfig[0].ovens[index].accessToken = result.accessToken;
+        currentConfig[0].ovens[index].refreshToken = result.refreshToken;
+        await homebridge.updatePluginConfig(currentConfig);
+        await homebridge.savePluginConfig();
+      }
+    } catch (error) {
+      statusLine.textContent = `Status check failed: ${error.message || error}`;
+    } finally {
+      button.disabled = false;
     }
   }
 
   async function removeOven(index) {
     const oven = currentConfig[0].ovens[index];
-    if (!window.confirm(`Remove ${oven.name || 'this oven'}? Its HomeKit accessories will be removed on next restart.`)) {
+    const confirmed = window.confirm(
+      `Remove ${oven.name || 'this oven'} from Homebridge?\n\n` +
+      'This only removes it from Homebridge\'s config — it does not revoke access on June\'s servers. ' +
+      'To fully disconnect this companion, also remove it from the oven\'s own connected-devices screen ' +
+      '(swipe left twice → Connect → manage connected devices).',
+    );
+    if (!confirmed) {
       return;
     }
     currentConfig[0].ovens.splice(index, 1);

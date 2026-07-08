@@ -13,8 +13,9 @@ A [Homebridge](https://homebridge.io) plugin that brings [June](https://juneoven
 
 - **Thermostat accessory** (`June` by default) — set a target temperature, read the current cavity temperature, turn off to cancel a cook.
 - **Optional preheat switch** (`June Preheat`) — turning it on preheats to your configured default mode/temperature; turning it off cancels.
-- **Optional `June Ready` / `June Done` occupancy sensors** — trigger Home app notifications when the oven finishes preheating or finishes cooking.
+- **Optional `June Ready` / `June Done` occupancy sensors** — see [Ready and Done sensors](#ready-and-done-sensors) below for what they do and how to hook up notifications.
 - **In-plugin pairing** — pair from the Config UI with an 8-digit code, the same flow the June app uses. No account credentials are ever entered into or stored by the plugin.
+- **Editable per-oven settings in the Config UI** — rename accessories, toggle sensors, set default cook mode/temperature (in whichever unit you prefer), and check an oven's live connection status, all without hand-editing `config.json`.
 - **Automatic token refresh** and a persistent, signed WebSocket connection to June's messaging service for live status and commands.
 - **Multi-oven support.**
 
@@ -45,17 +46,23 @@ The Homebridge Config UI plugin screen also shows beta releases if you enable "S
 
 ## Pair an oven
 
+This plugin pairs directly with the oven — you don't need the June phone app.
+
 1. Open the plugin's settings in the Homebridge Config UI.
-2. Click **Pair a new June oven**.
-3. On the oven's touchscreen, go to **Settings → Connect** and enter the 8-digit code shown in the Config UI.
-4. Wait for the Config UI to report **Paired**.
-5. Restart Homebridge so the newly saved accessory loads.
+2. On the oven's touchscreen, swipe left twice from the home screen and select **Connect**. If the oven already shows a list of connected devices instead of a code, tap **+** to add a new device.
+3. Click **Pair a new June oven** in the Config UI — it displays an 8-digit code.
+4. Type that code into the oven's screen.
+5. Wait for the Config UI to report **Paired**, then restart Homebridge so the newly saved accessory loads.
+
+If the oven's screen doesn't match these steps, June's own walkthrough for the same flow may help: [June app pairing guide](https://consumer-care.weber.com/s/article/Pairing-the-June-App-with-Your-Oven-1724960264554?language=en_US).
 
 The pairing identity (companion device password, access token, refresh token, Ed25519 seed) is stored in your Homebridge `config.json` under `ovens[]`. Treat that file as a secret — anyone with it can control your oven and read its status.
 
+Removing an oven from the Config UI only deletes it from Homebridge's config — it does **not** revoke the companion authorization on June's servers (there's no documented API for that). To fully disconnect a companion, also remove it from the oven's own connected-devices screen.
+
 ## Configuration
 
-The Config UI is the primary way to add and pair ovens; you shouldn't need to hand-edit `config.json`. For reference, a paired platform block looks like:
+The Config UI is the primary way to add, pair, and edit ovens; you shouldn't need to hand-edit `config.json`. Each paired oven's card in the Config UI lets you change its name, preheat switch name, ready/done sensors, default cook mode, default preheat temperature (shown in whichever unit you pick), and temperature display units, and includes a **Check status** button that queries June's cloud for the oven's current connection/cook state. For reference, a paired platform block looks like:
 
 ```json
 {
@@ -76,6 +83,15 @@ The Config UI is the primary way to add and pair ovens; you shouldn't need to ha
 ```
 
 Leave `preheatSwitchName` blank to disable the preheat switch.
+
+## Ready and Done sensors
+
+HomeKit has no "device finished a task" event, so `June Ready` and `June Done` are implemented as **Occupancy Sensors** — a repurposing common in the Homebridge ecosystem to get free, native Home app notifications out of a characteristic HomeKit already understands.
+
+- **`June Ready`** trips ("Occupancy Detected") once the oven finishes preheating — current cavity temperature is within 1°F of target. It resets automatically after 30 seconds, or immediately if you start another preheat.
+- **`June Done`** trips when an active cook stops on its own (not because you cancelled it) — i.e. the oven finished its cook cycle. It also auto-resets 30 seconds later.
+
+To get a notification, open the sensor's tile in the Home app and turn on notifications, or build a Home app Automation triggered by "Occupancy Detected" on that sensor. Since both reset themselves, there's nothing to clear after the fact — set up the notification/automation once.
 
 ## Siri and HomeKit
 
