@@ -261,7 +261,11 @@
     button.disabled = true;
     statusLine.textContent = 'Checking...';
     try {
-      const result = await homebridge.request('/oven/status', { oven: currentConfig[0].ovens[index] });
+      const result = await withTimeout(
+        homebridge.request('/oven/status', { oven: currentConfig[0].ovens[index] }),
+        15000,
+        'Status check timed out.',
+      );
       const t = result.telemetry || {};
       const parts = [];
       parts.push(t.connectionState ? `Connection: ${t.connectionState}` : 'Connection: unknown');
@@ -300,12 +304,24 @@
     renderOvens();
   }
 
+  function withTimeout(promise, ms, message) {
+    let timer;
+    const timeout = new Promise((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  }
+
   async function beginPairing() {
     pairButton.disabled = true;
     pairState.textContent = 'Starting pairing...';
     pairCard.classList.remove('d-none');
     try {
-      const status = await homebridge.request('/pair/begin', { deviceName: 'Homebridge June' });
+      const status = await withTimeout(
+        homebridge.request('/pair/begin', { deviceName: 'Homebridge June' }),
+        20000,
+        'Timed out starting pairing. Try closing and reopening this settings panel (or refreshing the page), then retry.',
+      );
       showStatus(status);
       pollTimer = setInterval(() => pollStatus(status.id), 2500);
     } catch (error) {
@@ -315,17 +331,27 @@
   }
 
   async function pollStatus(id) {
-    const status = await homebridge.request('/pair/status', { id });
-    showStatus(status);
-    if (status.state === 'paired') {
+    try {
+      const status = await withTimeout(
+        homebridge.request('/pair/status', { id }),
+        10000,
+        'Timed out checking pairing status. Try closing and reopening this settings panel, then retry.',
+      );
+      showStatus(status);
+      if (status.state === 'paired') {
+        clearInterval(pollTimer);
+        await saveOven(status.oven);
+        pairButton.disabled = false;
+        pairState.textContent = 'Paired. Restart Homebridge to load the accessory.';
+      }
+      if (status.state === 'failed') {
+        clearInterval(pollTimer);
+        pairButton.disabled = false;
+      }
+    } catch (error) {
       clearInterval(pollTimer);
-      await saveOven(status.oven);
       pairButton.disabled = false;
-      pairState.textContent = 'Paired. Restart Homebridge to load the accessory.';
-    }
-    if (status.state === 'failed') {
-      clearInterval(pollTimer);
-      pairButton.disabled = false;
+      pairState.textContent = error.message || String(error);
     }
   }
 
