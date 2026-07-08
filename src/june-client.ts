@@ -10,7 +10,6 @@ import {
   MC_CANCEL,
   MC_KEEPALIVE,
   MC_PREHEAT,
-  MC_TEMP,
   milliCToCelsius,
   normalizeOvenConfig,
   NormalizedJuneConfig,
@@ -73,11 +72,6 @@ export class JuneClient extends EventEmitter {
   public async preheat(mode = this.config.defaultMode, tempF = this.config.defaultTempF): Promise<string | null> {
     this.lastCancelled = false;
     return this.sendCommand(MC_PREHEAT, { primitive_type: mode, temperature_cavity: fahrenheitToMilliC(tempF) });
-  }
-
-  public async setTemperatureC(tempC: number): Promise<string | null> {
-    this.lastTargetTempC = tempC;
-    return this.sendCommand(MC_TEMP, { plan_id: 0, temperature_cavity: Math.round(tempC * 1000) });
   }
 
   public async cancel(): Promise<string | null> {

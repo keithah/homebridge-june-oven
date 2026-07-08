@@ -61,7 +61,15 @@ export class JuneThermostatAccessory {
     if (!this.active) {
       return;
     }
-    const status = await this.client.setTemperatureC(value);
+    // June rejects (or silently ignores) changing an already-active cook's
+    // target temperature directly — confirmed live: re-issuing preheat()
+    // while active gets acked "not-allowed", and the old MC_TEMP primitive
+    // acks "success" without actually changing the oven's target. Cancelling
+    // first and then preheating at the new temperature is what actually
+    // works, verified by polling fetchStatus() afterward.
+    const tempF = Math.round(value * 9 / 5 + 32);
+    await this.client.cancel();
+    const status = await this.client.preheat(this.client.config.defaultMode, tempF);
     if (status !== 'success') {
       this.service.updateCharacteristic(this.platform.Characteristic.TargetTemperature, previous);
       this.platform.log.warn(`June rejected target temperature change: ${status || 'no ack'}`);

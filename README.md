@@ -110,6 +110,8 @@ Works well:
 
 HomeKit doesn't expose an oven-timer characteristic Siri can drive, so this plugin doesn't fake voice timers, timer extension, or spoken time remaining.
 
+June's oven doesn't support changing the target temperature of a cook that's already running — confirmed by testing against a real oven, both a direct "change temp" command and simply re-issuing preheat while active are rejected or silently ignored. So "Set June to 375" while it's already heating cancels the current cook and starts a new one at 375° (a brief, sub-second interruption) rather than smoothly retargeting.
+
 ## Troubleshooting
 
 - **Pairing hangs or fails** — make sure the oven and the Homebridge host both have working internet access; pairing goes through June's cloud, not local network. Double-check the 8-digit code before it expires and try again.
