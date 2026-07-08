@@ -13,7 +13,15 @@
 
   .june-oven-list {
     display: grid;
-    gap: 0.5rem;
+    gap: 0.75rem;
+  }
+
+  .june-oven-card .form-group {
+    margin-bottom: 0.75rem;
+  }
+
+  .june-oven-card .form-check {
+    margin-bottom: 0.5rem;
   }
 </style>
 
@@ -47,15 +55,129 @@
   let currentConfig = [];
   let pollTimer;
 
+  const MODES = [
+    { value: 'bake', label: 'Bake' },
+    { value: 'roast', label: 'Roast' },
+    { value: 'broil', label: 'Broil' },
+    { value: 'air_fry', label: 'Air Fry' },
+  ];
+
   async function loadConfig() {
     currentConfig = await homebridge.getPluginConfig();
     if (!currentConfig.length) {
       currentConfig = [{ platform: 'JuneOven', name: 'June', ovens: [] }];
     }
+    currentConfig[0].ovens = currentConfig[0].ovens || [];
+    renderOvens();
+  }
+
+  function renderOvens() {
     const ovens = currentConfig[0].ovens || [];
-    ovenList.innerHTML = ovens.length
-      ? ovens.map(oven => `<div class="border rounded p-2"><strong>${escapeHtml(oven.name || 'June')}</strong><div class="small">${escapeHtml(oven.ovenId || '')}</div></div>`).join('')
-      : '<span>No ovens paired yet.</span>';
+    if (!ovens.length) {
+      ovenList.innerHTML = '<span>No ovens paired yet.</span>';
+      return;
+    }
+    ovenList.innerHTML = ovens.map((oven, index) => ovenCardHtml(oven, index)).join('');
+    ovens.forEach((oven, index) => bindOvenCard(index));
+  }
+
+  function ovenCardHtml(oven, index) {
+    const modeOptions = MODES.map(mode =>
+      `<option value="${mode.value}"${oven.defaultMode === mode.value ? ' selected' : ''}>${mode.label}</option>`,
+    ).join('');
+    return `
+      <div class="card june-oven-card" data-index="${index}">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start mb-2">
+            <strong>${escapeHtml(oven.name || 'June')}</strong>
+            <button class="btn btn-sm btn-outline-danger remove-oven" data-index="${index}" type="button">Remove</button>
+          </div>
+          <div class="small text-muted mb-3">Oven ID: ${escapeHtml(oven.ovenId || '')}</div>
+
+          <div class="form-group">
+            <label>Thermostat Name</label>
+            <input type="text" class="form-control field-name" value="${escapeHtml(oven.name || 'June')}">
+          </div>
+
+          <div class="form-group">
+            <label>Preheat Switch Name</label>
+            <input type="text" class="form-control field-preheatSwitchName" value="${escapeHtml(oven.preheatSwitchName ?? 'June Preheat')}" placeholder="Leave blank to disable">
+            <small class="form-text text-muted">Leave blank to disable the preheat switch.</small>
+          </div>
+
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input field-readySensor" ${oven.readySensor !== false ? 'checked' : ''}>
+            <label class="form-check-label">Ready sensor</label>
+          </div>
+
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input field-doneSensor" ${oven.doneSensor !== false ? 'checked' : ''}>
+            <label class="form-check-label">Done sensor</label>
+          </div>
+
+          <div class="form-group">
+            <label>Default Cook Mode</label>
+            <select class="form-control field-defaultMode">${modeOptions}</select>
+          </div>
+
+          <div class="form-group">
+            <label>Default Preheat Temp (F)</label>
+            <input type="number" class="form-control field-defaultTempF" min="100" max="500" value="${oven.defaultTempF ?? 350}">
+          </div>
+
+          <div class="form-group">
+            <label>Display Units</label>
+            <select class="form-control field-tempUnit">
+              <option value="F"${(oven.tempUnit || 'F') === 'F' ? ' selected' : ''}>Fahrenheit</option>
+              <option value="C"${oven.tempUnit === 'C' ? ' selected' : ''}>Celsius</option>
+            </select>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  function bindOvenCard(index) {
+    const card = ovenList.querySelector(`.june-oven-card[data-index="${index}"]`);
+    if (!card) return;
+
+    const bindings = [
+      ['.field-name', 'name', 'value'],
+      ['.field-preheatSwitchName', 'preheatSwitchName', 'value'],
+      ['.field-readySensor', 'readySensor', 'checked'],
+      ['.field-doneSensor', 'doneSensor', 'checked'],
+      ['.field-defaultMode', 'defaultMode', 'value'],
+      ['.field-tempUnit', 'tempUnit', 'value'],
+    ];
+    for (const [selector, key, prop] of bindings) {
+      const el = card.querySelector(selector);
+      el.addEventListener('change', () => updateOven(index, key, prop === 'checked' ? el.checked : el.value));
+    }
+
+    const tempEl = card.querySelector('.field-defaultTempF');
+    tempEl.addEventListener('change', () => updateOven(index, 'defaultTempF', Number(tempEl.value) || 350));
+
+    card.querySelector('.remove-oven').addEventListener('click', () => removeOven(index));
+  }
+
+  async function updateOven(index, key, value) {
+    const ovens = currentConfig[0].ovens;
+    ovens[index] = { ...ovens[index], [key]: value };
+    await homebridge.updatePluginConfig(currentConfig);
+    await homebridge.savePluginConfig();
+    if (key === 'name') {
+      renderOvens();
+    }
+  }
+
+  async function removeOven(index) {
+    const oven = currentConfig[0].ovens[index];
+    if (!window.confirm(`Remove ${oven.name || 'this oven'}? Its HomeKit accessories will be removed on next restart.`)) {
+      return;
+    }
+    currentConfig[0].ovens.splice(index, 1);
+    await homebridge.updatePluginConfig(currentConfig);
+    await homebridge.savePluginConfig();
+    renderOvens();
   }
 
   async function beginPairing() {
