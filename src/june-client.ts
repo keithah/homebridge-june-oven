@@ -29,6 +29,22 @@ export interface JuneTelemetry {
   probePresent?: boolean;
 }
 
+export interface JuneSnapshot {
+  url: string;
+  contentType: string;
+}
+
+// A 10011 camera frame carries a pre-signed still-JPEG URL (image_url = CDN,
+// signed_url = direct S3), valid ~300 s, pushed ~1/s during a cook.
+export function parseCameraFrame(data: any): JuneSnapshot | null {
+  const url = typeof data?.image_url === 'string' ? data.image_url
+    : typeof data?.signed_url === 'string' ? data.signed_url : undefined;
+  if (!url) {
+    return null;
+  }
+  return { url, contentType: typeof data?.content_type === 'string' ? data.content_type : 'image/jpeg' };
+}
+
 // Field paths are the documented guess from the RE spec; verify against a live
 // probe-cook capture (Spike B) before relying on them in production.
 export function parseProbeTelemetry(data: any): Pick<JuneTelemetry, 'probeLeftC' | 'probeRightC' | 'probePresent'> {
@@ -69,6 +85,11 @@ export class JuneClient extends EventEmitter {
   private lastActive = false;
   private lastCancelled = false;
   private lastTargetTempC?: number;
+  private snapshot?: JuneSnapshot;
+
+  public get latestSnapshot(): JuneSnapshot | undefined {
+    return this.snapshot;
+  }
 
   constructor(config: JuneOvenConfig, private readonly log: Pick<Console, 'debug' | 'warn' | 'error'> = console) {
     super();
@@ -232,6 +253,13 @@ export class JuneClient extends EventEmitter {
         ready: typeof data.cook_state_data?.progress === 'number' && data.cook_state_data.progress >= 0.995,
         ...parseProbeTelemetry(data),
       });
+      return;
+    }
+    if (frame.message_code === 10011) {
+      const snapshot = parseCameraFrame(data);
+      if (snapshot) {
+        this.snapshot = snapshot;
+      }
       return;
     }
     if (frame.message_code === 10015 || frame.message_code === 10016) {

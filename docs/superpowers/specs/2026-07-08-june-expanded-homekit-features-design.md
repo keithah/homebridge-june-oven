@@ -39,11 +39,29 @@ Store builds), so that captured research is authoritative.
 - The interior camera exists and produces **periodic JPEG stills** per cook session, stored at
   `api.junelife.com/media/prod/images/1-{sessionId}-{ovenId}/image.jpg_{uuid}.jpe`.
 
-### What is NOT confirmed (drives the two spikes below)
-- **`10011` camera frame** (`{video_id, signed_url}`) was never captured (0 frames in the dump).
-  It is the only documented way to learn the *current* still's URL — the stored stills have
-  unpredictable UUID filenames and there is no listing endpoint in the capture. **The camera
-  snapshot and the doorbell thumbnail both depend on capturing one `10011` frame.**
+### `10011` camera frame — SOLVED (captured live 2026-07-08)
+A capture during a real cook (start a bake on our own trusted key, log inbound WS frames) decoded
+`10011` completely. It auto-streams to **any connected companion during a cook** — no emulator,
+frida, or app login required; our plugin's existing WebSocket already receives it. Each frame:
+
+```json
+{ "video_id": "…", "ts": 1783544754057,
+  "signed_url": "https://june-api.s3.amazonaws.com/media/prod/images/1-{video_id}-{ovenId}/image.jpg_{uuid}.jpe?X-Amz-…",
+  "image_url":  "https://api.junelife.com/media/prod/images/1-{video_id}-{ovenId}/image.jpg_{uuid}.jpe?X-Amz-…",
+  "content_type": "image/jpeg", "image_size": 20436, "client_req_id": "…" }
+```
+
+- **It's a still JPEG** (~20 KB), pushed at **~1 fps** during a cook. No video stream to decode.
+- `image_url` (api.junelife.com CDN) and `signed_url` (direct S3) are both pre-signed, **expire in
+  300 s**. Prefer `image_url`.
+- Snapshot strategy: cache the latest `image_url` from `10011`; the camera's snapshot handler
+  fetches it. Frames land ~1/s while cooking, so it looks live. No cook → no `10011` → serve the
+  last-known frame or a placeholder.
+
+### What is still NOT confirmed
+- **Food-probe temperature fields** in `10013` — the frame has a `sensor_data` object, but the cook
+  used to capture `10011` had no probe inserted, so the probe field names/paths remain the spec's
+  documented guess (`left_probe`/`right_probe`/`probe_temperature`). Confirm with a probe cook.
 - **Food-probe temperature fields** in `10013` — the spec names `left_probe`/`right_probe`/
   `probe_temperature`, but the exact JSON path was not pinned down in a live probe cook.
 - **Door-open** is only observable as a command *rejection reason* (`10020 status:"door-open"`),
@@ -53,17 +71,14 @@ Store builds), so that captured research is authoritative.
 
 ## Prerequisite spikes (tasks, not code)
 
-- **Spike A — capture a `10011` frame.** Run the June app through the Android emulator + Frida
-  during an active cook, record a `10011` message, and document how the current snapshot URL is
-  delivered (signed URL shape, TTL, whether it is a single still or a refreshing sequence). This
-  unblocks features 1 (thumbnail) and 2 (camera). Until it lands, the doorbell ships without a
-  thumbnail and the camera is not built.
-- **Spike B — probe field path.** From the same or a probe-cook capture, confirm the exact
-  `10013` JSON path(s) for left/right probe temperature and probe-present. Unblocks feature 3.
+- **Spike A — capture a `10011` frame. ✅ DONE (2026-07-08).** Decoded live; see the `10011`
+  section above. Camera is unblocked and needs no emulator — the frame arrives on our own
+  WebSocket during any cook.
+- **Spike B — probe field path.** Confirm the exact `10013` `sensor_data` JSON path(s) for
+  left/right probe temperature and probe-present, from a cook with a probe inserted. Unblocks
+  full confidence in feature 3 (implemented against the documented guess in the meantime).
 - **Spike C (optional) — door-open.** Only needed if the door-open doorbell trigger should
   actually work. Confirm whether any push signal reports door state.
-
-Features 3 and 4 can begin in parallel with Spike A; feature 4 needs no spike.
 
 ## Feature 1 — Cook-done doorbell
 
