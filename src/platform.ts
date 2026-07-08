@@ -16,13 +16,14 @@ import { JuneOccupancySensorAccessory } from './accessories/sensors';
 import { JuneDoorbellAccessory } from './accessories/doorbell';
 import { JuneModeSwitchAccessory } from './accessories/mode-switch';
 import { JuneProbeSensorAccessory } from './accessories/probe-sensor';
+import { attachCamera } from './accessories/camera';
 
 export interface JunePlatformConfig extends PlatformConfig {
   name?: string;
   ovens?: JuneOvenConfig[];
 }
 
-type AccessoryKind = 'thermostat' | 'preheat' | 'ready' | 'done' | 'doorbell' | 'modes' | 'probes';
+type AccessoryKind = 'thermostat' | 'preheat' | 'ready' | 'done' | 'doorbell' | 'modes' | 'probes' | 'camera';
 
 export class JunePlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service;
@@ -69,7 +70,10 @@ export class JunePlatform implements DynamicPlatformPlugin {
         this.bindAccessory(client, 'done', `${oven.name || 'June'} Done`, wanted);
       }
       if (client.config.doorbell.enabled) {
+        // Camera (if enabled) attaches to this same accessory → Video Doorbell.
         this.bindAccessory(client, 'doorbell', client.config.doorbell.name, wanted);
+      } else if (client.config.camera.enabled) {
+        this.bindAccessory(client, 'camera', client.config.camera.name, wanted);
       }
       if (client.config.modes.length > 0) {
         this.bindAccessory(client, 'modes', `${oven.name || 'June'} Modes`, wanted);
@@ -103,6 +107,11 @@ export class JunePlatform implements DynamicPlatformPlugin {
       new JunePreheatSwitchAccessory(this, accessory, client);
     } else if (kind === 'doorbell') {
       new JuneDoorbellAccessory(this, accessory, client);
+      if (client.config.camera.enabled) {
+        attachCamera(this, accessory, client);
+      }
+    } else if (kind === 'camera') {
+      attachCamera(this, accessory, client);
     } else if (kind === 'modes') {
       new JuneModeSwitchAccessory(this, accessory, client);
     } else if (kind === 'probes') {

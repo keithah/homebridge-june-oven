@@ -44,6 +44,11 @@ describe('normalizeOvenConfig new options', () => {
     expect(n.probeSensors).toEqual({ enabled: true, leftName: 'Roast', rightName: 'Right Probe' });
   });
 
+  it('defaults camera to disabled with a default ffmpeg path', () => {
+    const n = normalizeOvenConfig(base);
+    expect(n.camera).toEqual({ enabled: false, name: 'June Camera', ffmpegPath: 'ffmpeg' });
+  });
+
   it('drops mode entries missing a primitiveType and defaults label/temp', () => {
     const n = normalizeOvenConfig({
       ...base,

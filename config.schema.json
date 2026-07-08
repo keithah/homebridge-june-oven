@@ -82,6 +82,15 @@
                 }
               }
             },
+            "camera": {
+              "title": "Interior Camera",
+              "type": "object",
+              "properties": {
+                "enabled": { "title": "Enable Camera", "type": "boolean", "default": false, "description": "Shows the oven's interior camera (a still refreshed ~1x/sec while cooking). If Doorbell is also enabled, they combine into a Video Doorbell so the notification shows a photo of your food." },
+                "name": { "title": "Camera Name", "type": "string", "default": "June Camera" },
+                "ffmpegPath": { "title": "ffmpeg Path", "type": "string", "default": "ffmpeg", "description": "Path to ffmpeg, used only for tap-to-view live streaming. Snapshots work without it. Leave as 'ffmpeg' to use the system install." }
+              }
+            },
             "probeSensors": {
               "title": "Food Probe Temperature Sensors",
               "type": "object",
@@ -138,6 +147,9 @@
         "ovens[].doorbell.triggers.done",
         "ovens[].doorbell.triggers.ready",
         "ovens[].doorbell.triggers.doorOpen",
+        "ovens[].camera.enabled",
+        "ovens[].camera.name",
+        "ovens[].camera.ffmpegPath",
         "ovens[].probeSensors.enabled",
         "ovens[].probeSensors.leftName",
         "ovens[].probeSensors.rightName",

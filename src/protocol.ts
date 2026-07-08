@@ -30,6 +30,12 @@ export interface JuneProbeSensorsConfig {
   rightName: string;
 }
 
+export interface JuneCameraConfig {
+  enabled: boolean;
+  name: string;
+  ffmpegPath: string;
+}
+
 export interface JuneOvenConfig {
   name?: string;
   preheatSwitchName?: string;
@@ -41,6 +47,7 @@ export interface JuneOvenConfig {
   doorbell?: Partial<Omit<JuneDoorbellConfig, 'triggers'>> & { triggers?: Partial<JuneDoorbellConfig['triggers']> };
   modes?: JuneModeConfig[];
   probeSensors?: Partial<JuneProbeSensorsConfig>;
+  camera?: Partial<JuneCameraConfig>;
   ovenId: string;
   deviceId: string;
   deviceName: string;
@@ -63,6 +70,7 @@ export interface NormalizedJuneConfig extends JuneOvenConfig {
   doorbell: JuneDoorbellConfig;
   modes: JuneModeConfig[];
   probeSensors: JuneProbeSensorsConfig;
+  camera: JuneCameraConfig;
   accessToken: string;
   refreshToken: string;
   clientId: string;
@@ -116,6 +124,11 @@ export function normalizeOvenConfig(config: JuneOvenConfig): NormalizedJuneConfi
       enabled: config.probeSensors?.enabled ?? false,
       leftName: config.probeSensors?.leftName || 'Left Probe',
       rightName: config.probeSensors?.rightName || 'Right Probe',
+    },
+    camera: {
+      enabled: config.camera?.enabled ?? false,
+      name: config.camera?.name || 'June Camera',
+      ffmpegPath: config.camera?.ffmpegPath || 'ffmpeg',
     },
   };
 }
