@@ -1,0 +1,30 @@
+name: Bug report
+description: Something isn't working right
+labels: [bug]
+body:
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Plugin version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: homebridge-version
+    attributes:
+      label: Homebridge version
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Include steps to reproduce.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Homebridge log output
+      description: Redact any tokens, seeds, or passwords before pasting.
+      render: shell

@@ -1,0 +1,62 @@
+{
+  "name": "homebridge-june-oven",
+  "version": "0.1.0",
+  "description": "Homebridge dynamic platform plugin for June ovens with in-plugin PIN pairing.",
+  "license": "MIT",
+  "author": "Keith Herrington (https://github.com/keithah)",
+  "homepage": "https://github.com/keithah/homebridge-june-oven#readme",
+  "bugs": {
+    "url": "https://github.com/keithah/homebridge-june-oven/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/keithah/homebridge-june-oven.git"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "homebridge-ui",
+    "config.schema.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "homebridge-plugin",
+    "homebridge",
+    "june",
+    "oven",
+    "thermostat",
+    "kitchen",
+    "homekit"
+  ],
+  "engines": {
+    "node": "^18.20.4 || ^20.15.1 || ^22",
+    "homebridge": ">=1.8.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run lint && npm run test && npm run build"
+  },
+  "dependencies": {
+    "@homebridge/plugin-ui-utils": "^2.1.2",
+    "libsodium": "^0.8.4",
+    "libsodium-wrappers": "^0.7.15",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/libsodium-wrappers": "^0.7.14",
+    "@types/node": "^20.14.10",
+    "@types/ws": "^8.5.10",
+    "homebridge": "^1.8.4",
+    "typescript": "^5.5.3",
+    "vitest": "^1.6.0"
+  },
+  "peerDependencies": {
+    "homebridge": ">=1.8.0"
+  }
+}

@@ -1,0 +1,125 @@
+<style>
+  .june-shell {
+    display: grid;
+    gap: 1rem;
+  }
+
+  .june-code {
+    font-size: 2.2rem;
+    font-weight: 700;
+    letter-spacing: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .june-oven-list {
+    display: grid;
+    gap: 0.5rem;
+  }
+</style>
+
+<div class="june-shell">
+  <div>
+    <h4 class="mb-2">June Oven Pairing</h4>
+    <p class="text-muted mb-3">Pair a June oven directly from Homebridge. The oven must be idle, closed, online, and ready for a new companion code.</p>
+    <button id="pairButton" class="btn btn-primary">Pair a new June oven</button>
+  </div>
+
+  <div id="pairCard" class="card d-none">
+    <div class="card-body">
+      <div class="text-muted mb-1">On your oven, open Settings -> Connect and enter:</div>
+      <div id="pairCode" class="june-code mb-2"></div>
+      <div id="pairState" class="text-muted">Waiting for the oven...</div>
+    </div>
+  </div>
+
+  <div>
+    <h5 class="mb-2">Paired ovens</h5>
+    <div id="ovenList" class="june-oven-list text-muted">Loading...</div>
+  </div>
+</div>
+
+<script>
+  const pairButton = document.getElementById('pairButton');
+  const pairCard = document.getElementById('pairCard');
+  const pairCode = document.getElementById('pairCode');
+  const pairState = document.getElementById('pairState');
+  const ovenList = document.getElementById('ovenList');
+  let currentConfig = [];
+  let pollTimer;
+
+  async function loadConfig() {
+    currentConfig = await homebridge.getPluginConfig();
+    if (!currentConfig.length) {
+      currentConfig = [{ platform: 'JuneOven', name: 'June', ovens: [] }];
+    }
+    const ovens = currentConfig[0].ovens || [];
+    ovenList.innerHTML = ovens.length
+      ? ovens.map(oven => `<div class="border rounded p-2"><strong>${escapeHtml(oven.name || 'June')}</strong><div class="small">${escapeHtml(oven.ovenId || '')}</div></div>`).join('')
+      : '<span>No ovens paired yet.</span>';
+  }
+
+  async function beginPairing() {
+    pairButton.disabled = true;
+    pairState.textContent = 'Starting pairing...';
+    pairCard.classList.remove('d-none');
+    try {
+      const status = await homebridge.request('/pair/begin', { deviceName: 'Homebridge June' });
+      showStatus(status);
+      pollTimer = setInterval(() => pollStatus(status.id), 2500);
+    } catch (error) {
+      pairButton.disabled = false;
+      pairState.textContent = error.message || String(error);
+    }
+  }
+
+  async function pollStatus(id) {
+    const status = await homebridge.request('/pair/status', { id });
+    showStatus(status);
+    if (status.state === 'paired') {
+      clearInterval(pollTimer);
+      await saveOven(status.oven);
+      pairButton.disabled = false;
+      pairState.textContent = 'Paired. Restart Homebridge to load the accessory.';
+    }
+    if (status.state === 'failed') {
+      clearInterval(pollTimer);
+      pairButton.disabled = false;
+    }
+  }
+
+  function showStatus(status) {
+    if (status.shownCode) {
+      pairCode.textContent = `${status.shownCode.slice(0, 4)} ${status.shownCode.slice(4)}`;
+    }
+    const labels = {
+      starting: 'Starting pairing...',
+      'waiting-for-oven': 'Waiting for the oven...',
+      'posting-companion': 'Securing the companion key...',
+      'waiting-for-associated': 'Waiting for the oven to finish pairing...',
+      paired: 'Paired.',
+      failed: status.error || 'Pairing failed.',
+    };
+    pairState.textContent = labels[status.state] || status.state;
+  }
+
+  async function saveOven(oven) {
+    if (!oven) return;
+    currentConfig[0].ovens = currentConfig[0].ovens || [];
+    const index = currentConfig[0].ovens.findIndex(existing => existing.ovenId === oven.ovenId);
+    if (index >= 0) {
+      currentConfig[0].ovens[index] = { ...currentConfig[0].ovens[index], ...oven };
+    } else {
+      currentConfig[0].ovens.push(oven);
+    }
+    await homebridge.updatePluginConfig(currentConfig);
+    await homebridge.savePluginConfig();
+    await loadConfig();
+  }
+
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+  }
+
+  pairButton.addEventListener('click', beginPairing);
+  loadConfig();
+</script>

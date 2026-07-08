@@ -1,0 +1,99 @@
+{
+  "pluginAlias": "JuneOven",
+  "pluginType": "platform",
+  "customUi": true,
+  "singular": true,
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "Platform Name",
+        "type": "string",
+        "default": "June"
+      },
+      "ovens": {
+        "title": "Paired Ovens",
+        "type": "array",
+        "default": [],
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "title": "Thermostat Name",
+              "type": "string",
+              "default": "June"
+            },
+            "preheatSwitchName": {
+              "title": "Preheat Switch Name",
+              "type": "string",
+              "default": "June Preheat",
+              "description": "Leave blank to disable the preheat switch."
+            },
+            "readySensor": {
+              "title": "Ready Sensor",
+              "type": "boolean",
+              "default": true
+            },
+            "doneSensor": {
+              "title": "Done Sensor",
+              "type": "boolean",
+              "default": true
+            },
+            "defaultMode": {
+              "title": "Default Cook Mode",
+              "type": "string",
+              "default": "bake",
+              "oneOf": [
+                { "title": "Bake", "enum": ["bake"] },
+                { "title": "Roast", "enum": ["roast"] },
+                { "title": "Broil", "enum": ["broil"] },
+                { "title": "Air Fry", "enum": ["air_fry"] }
+              ]
+            },
+            "defaultTempF": {
+              "title": "Default Preheat Temp (F)",
+              "type": "integer",
+              "default": 350,
+              "minimum": 100,
+              "maximum": 500
+            },
+            "tempUnit": {
+              "title": "Display Units",
+              "type": "string",
+              "default": "F",
+              "oneOf": [
+                { "title": "Fahrenheit", "enum": ["F"] },
+                { "title": "Celsius", "enum": ["C"] }
+              ]
+            },
+            "ovenId": { "type": "string", "hidden": true },
+            "deviceId": { "type": "string", "hidden": true },
+            "deviceName": { "type": "string", "hidden": true },
+            "password": { "type": "string", "hidden": true },
+            "ed25519SeedHex": { "type": "string", "hidden": true },
+            "accessToken": { "type": "string", "hidden": true },
+            "refreshToken": { "type": "string", "hidden": true },
+            "clientId": { "type": "string", "hidden": true },
+            "clientSecret": { "type": "string", "hidden": true }
+          },
+          "required": ["ovenId", "deviceId", "deviceName", "password", "ed25519SeedHex"]
+        }
+      }
+    }
+  },
+  "form": [
+    "name",
+    {
+      "key": "ovens",
+      "items": [
+        "ovens[].name",
+        "ovens[].preheatSwitchName",
+        "ovens[].readySensor",
+        "ovens[].doneSensor",
+        "ovens[].defaultMode",
+        "ovens[].defaultTempF",
+        "ovens[].tempUnit"
+      ]
+    }
+  ]
+}
