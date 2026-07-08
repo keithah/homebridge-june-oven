@@ -45,22 +45,25 @@ export function parseCameraFrame(data: any): JuneSnapshot | null {
   return { url, contentType: typeof data?.content_type === 'string' ? data.content_type : 'image/jpeg' };
 }
 
-// Field paths are the documented guess from the RE spec; verify against a live
-// probe-cook capture (Spike B) before relying on them in production.
+// Confirmed live (2026-07-08): 10013 sensor_data.probe is an array of
+// { id: "left"|"right", value: <milli-C> } entries; there is no food_present
+// field, so probe presence is inferred from the array having entries.
 export function parseProbeTelemetry(data: any): Pick<JuneTelemetry, 'probeLeftC' | 'probeRightC' | 'probePresent'> {
-  const sensor = data?.sensor_data ?? {};
+  const probes = Array.isArray(data?.sensor_data?.probe) ? data.sensor_data.probe : undefined;
   const out: Pick<JuneTelemetry, 'probeLeftC' | 'probeRightC' | 'probePresent'> = {};
-  const left = typeof sensor.left_probe === 'number' ? sensor.left_probe
-    : typeof sensor.probe_temperature === 'number' ? sensor.probe_temperature : undefined;
+  if (!probes) {
+    return out;
+  }
+  const valueOf = (p: any) => (p && typeof p.value === 'number' ? p.value : undefined);
+  const left = valueOf(probes.find((p: any) => p?.id === 'left')) ?? valueOf(probes.find((p: any) => valueOf(p) !== undefined));
+  const right = valueOf(probes.find((p: any) => p?.id === 'right'));
   if (typeof left === 'number') {
     out.probeLeftC = milliCToCelsius(left);
   }
-  if (typeof sensor.right_probe === 'number') {
-    out.probeRightC = milliCToCelsius(sensor.right_probe);
+  if (typeof right === 'number') {
+    out.probeRightC = milliCToCelsius(right);
   }
-  if (typeof data?.food_present === 'boolean') {
-    out.probePresent = data.food_present;
-  }
+  out.probePresent = probes.length > 0;
   return out;
 }
 

@@ -2,18 +2,19 @@ import { describe, it, expect } from 'vitest';
 import { JuneClient, parseProbeTelemetry, parseCameraFrame } from './june-client';
 
 describe('parseProbeTelemetry', () => {
-  it('reads left/right probe milli-C into Celsius', () => {
-    const out = parseProbeTelemetry({ sensor_data: { left_probe: 60000, right_probe: 62500 }, food_present: true });
+  it('reads left/right probes from the probe array (milli-C into Celsius)', () => {
+    const out = parseProbeTelemetry({ sensor_data: { cavity: 61100, probe: [{ id: 'left', value: 60000 }, { id: 'right', value: 62500 }] } });
     expect(out).toEqual({ probeLeftC: 60, probeRightC: 62.5, probePresent: true });
   });
 
-  it('falls back to single probe_temperature as the left probe', () => {
-    const out = parseProbeTelemetry({ sensor_data: { probe_temperature: 71000 } });
-    expect(out.probeLeftC).toBe(71);
+  it('maps a single probe as the left probe', () => {
+    const out = parseProbeTelemetry({ sensor_data: { probe: [{ id: 'left', value: 18200 }] } });
+    expect(out.probeLeftC).toBeCloseTo(18.2);
     expect(out.probeRightC).toBeUndefined();
+    expect(out.probePresent).toBe(true);
   });
 
-  it('returns empty object when no probe data present', () => {
+  it('returns empty object when the probe field is absent', () => {
     expect(parseProbeTelemetry({ sensor_data: { cavity: 150000 } })).toEqual({});
   });
 });

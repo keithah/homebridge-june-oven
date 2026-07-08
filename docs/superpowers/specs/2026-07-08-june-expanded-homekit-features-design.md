@@ -59,10 +59,10 @@ frida, or app login required; our plugin's existing WebSocket already receives i
   fetches it. Frames land ~1/s while cooking, so it looks live. No cook → no `10011` → serve the
   last-known frame or a placeholder.
 
-### What is still NOT confirmed
-- **Food-probe temperature fields** in `10013` — the frame has a `sensor_data` object, but the cook
-  used to capture `10011` had no probe inserted, so the probe field names/paths remain the spec's
-  documented guess (`left_probe`/`right_probe`/`probe_temperature`). Confirm with a probe cook.
+### Food-probe fields — SOLVED (captured live 2026-07-08, probe in a water bowl)
+`10013` `sensor_data.probe` is an **array** of `{ id: "left"|"right", value: <milli-C> }`. There is
+no `food_present` field; probe presence = the array has entries. Confirmed live: cavity `61100`
+(142°F) vs. probe `{id:"left",value:18200}` (65°F water). `parseProbeTelemetry` parses this shape.
 - **Food-probe temperature fields** in `10013` — the spec names `left_probe`/`right_probe`/
   `probe_temperature`, but the exact JSON path was not pinned down in a live probe cook.
 - **Door-open** is only observable as a command *rejection reason* (`10020 status:"door-open"`),
@@ -75,9 +75,8 @@ frida, or app login required; our plugin's existing WebSocket already receives i
 - **Spike A — capture a `10011` frame. ✅ DONE (2026-07-08).** Decoded live; see the `10011`
   section above. Camera is unblocked and needs no emulator — the frame arrives on our own
   WebSocket during any cook.
-- **Spike B — probe field path.** Confirm the exact `10013` `sensor_data` JSON path(s) for
-  left/right probe temperature and probe-present, from a cook with a probe inserted. Unblocks
-  full confidence in feature 3 (implemented against the documented guess in the meantime).
+- **Spike B — probe field path. ✅ DONE (2026-07-08).** Decoded live; `sensor_data.probe` is an
+  array of `{id, value}` (see above). `parseProbeTelemetry` updated and unit-tested to match.
 - **Spike C (optional) — door-open.** Only needed if the door-open doorbell trigger should
   actually work. Confirm whether any push signal reports door state.
 
