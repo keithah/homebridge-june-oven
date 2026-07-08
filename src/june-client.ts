@@ -24,6 +24,28 @@ export interface JuneTelemetry {
   ready?: boolean;
   done?: boolean;
   connectionState?: string;
+  probeLeftC?: number;
+  probeRightC?: number;
+  probePresent?: boolean;
+}
+
+// Field paths are the documented guess from the RE spec; verify against a live
+// probe-cook capture (Spike B) before relying on them in production.
+export function parseProbeTelemetry(data: any): Pick<JuneTelemetry, 'probeLeftC' | 'probeRightC' | 'probePresent'> {
+  const sensor = data?.sensor_data ?? {};
+  const out: Pick<JuneTelemetry, 'probeLeftC' | 'probeRightC' | 'probePresent'> = {};
+  const left = typeof sensor.left_probe === 'number' ? sensor.left_probe
+    : typeof sensor.probe_temperature === 'number' ? sensor.probe_temperature : undefined;
+  if (typeof left === 'number') {
+    out.probeLeftC = milliCToCelsius(left);
+  }
+  if (typeof sensor.right_probe === 'number') {
+    out.probeRightC = milliCToCelsius(sensor.right_probe);
+  }
+  if (typeof data?.food_present === 'boolean') {
+    out.probePresent = data.food_present;
+  }
+  return out;
 }
 
 export interface JuneClientEvents {
@@ -72,6 +94,11 @@ export class JuneClient extends EventEmitter {
   public async preheat(mode = this.config.defaultMode, tempF = this.config.defaultTempF): Promise<string | null> {
     this.lastCancelled = false;
     return this.sendCommand(MC_PREHEAT, { primitive_type: mode, temperature_cavity: fahrenheitToMilliC(tempF) });
+  }
+
+  public async startMode(primitiveType: string, tempF: number): Promise<string | null> {
+    this.lastCancelled = false;
+    return this.sendCommand(MC_PREHEAT, { primitive_type: primitiveType, temperature_cavity: fahrenheitToMilliC(tempF) });
   }
 
   public async cancel(): Promise<string | null> {
@@ -203,6 +230,7 @@ export class JuneClient extends EventEmitter {
       this.applyTelemetry({
         currentTempC: typeof data.sensor_data?.cavity === 'number' ? milliCToCelsius(data.sensor_data.cavity) : undefined,
         ready: typeof data.cook_state_data?.progress === 'number' && data.cook_state_data.progress >= 0.995,
+        ...parseProbeTelemetry(data),
       });
       return;
     }
