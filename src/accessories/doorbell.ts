@@ -5,9 +5,7 @@ import type { JunePlatform } from '../platform';
 /**
  * Plain HomeKit Doorbell that "rings" on configured cook events (done/ready).
  * Structured so a Camera service can be attached later to promote this into a
- * Video Doorbell whose notification carries the interior snapshot (see spec,
- * Spike A). The `doorOpen` trigger is intentionally not wired — no confirmed
- * oven signal exists for it yet.
+ * Video Doorbell whose notification carries the interior snapshot.
  */
 export class JuneDoorbellAccessory {
   private readonly service: Service;

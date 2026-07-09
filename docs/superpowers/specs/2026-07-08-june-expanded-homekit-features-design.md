@@ -16,7 +16,7 @@ Four features, in priority order:
    ready/done sensors; users can enable either, both, or neither.
 2. **Interior camera** (snapshot + ffmpeg live view) — BUILT. Spike A solved; snapshot verified
    live end-to-end. Combines with the doorbell into a Video Doorbell.
-3. **Food probe temperature sensors**
+3. **Food probe temperature sensor**
 4. **Config-driven cook-mode switches**
 
 Also in scope: a short **README section documenting why timer and cook-progress % are not
@@ -77,9 +77,6 @@ no `food_present` field; probe presence = the array has entries. Confirmed live:
   WebSocket during any cook.
 - **Spike B — probe field path. ✅ DONE (2026-07-08).** Decoded live; `sensor_data.probe` is an
   array of `{id, value}` (see above). `parseProbeTelemetry` updated and unit-tested to match.
-- **Spike C (optional) — door-open.** Only needed if the door-open doorbell trigger should
-  actually work. Confirm whether any push signal reports door state.
-
 ## Feature 1 — Cook-done doorbell
 
 A **Doorbell** accessory that fires a `ProgrammableSwitchEvent` (single-press) when a configured
@@ -91,10 +88,8 @@ occupancy sensors; users can enable either, both, or neither.
 - Triggers are **configurable** (all default off):
   - `done` — the cook-complete transition the client already computes (`JuneTelemetry.done`).
   - `ready` — preheat-complete / ready-to-load (`JuneTelemetry.ready`).
-  - `doorOpen` — **tentative**; wired behind config but only functional if Spike C confirms a
-    signal. If no signal is available it simply never fires; documented as such.
 - Config (per oven): `doorbell` object — `enabled` (bool, default false), `triggers` (object with
-  `done`/`ready`/`doorOpen` booleans, all default false), `name`.
+  `done`/`ready` booleans, all default false), `name`.
 
 **Architected for a later Video Doorbell.** The accessory is structured so that when feature 2's
 snapshot camera lands (post Spike A) and the user enables the camera, a Camera service is attached
@@ -122,17 +117,16 @@ There is deliberately no continuous/HKSV recording.
 - Implemented as part of the same accessory as the doorbell (feature 1) when both are enabled;
   camera-only (no doorbell triggers) is also valid.
 
-## Feature 3 — Food probe temperature sensors
+## Feature 3 — Food probe temperature sensor
 
-Expose the oven's food probe temperature(s) as HomeKit **Temperature Sensor** services, so users
+Expose the oven's food probe temperature as a HomeKit **Temperature Sensor** service, so users
 can build automations like "notify when probe reaches 145 °F."
 
-- Source: `10013` telemetry probe fields (exact path from Spike B). Support up to two probes
-  (left/right); a sensor is only shown when its probe reports a reading, and reads as inactive /
-  its last value otherwise.
+- Source: `10013` telemetry `sensor_data.probe` array from Spike B. The June oven has a single
+  food probe; the accessory keeps the last reported value between updates.
 - Opt-in. Config (per oven): `probeSensors.enabled` (bool, default false). Optionally a
-  `probeSensors.names` map for left/right display names.
-- New `JuneTelemetry` fields (e.g. `probeLeftC`, `probeRightC`, `probePresent`) populated in
+  `probeSensors.name` display name.
+- New `JuneTelemetry` fields (`probeC`, `probePresent`) populated in
   `JuneClient.handleMessage` for `10013`; a `JuneProbeSensorAccessory` subscribes to telemetry.
 
 ## Feature 4 — Config-driven cook-mode switches

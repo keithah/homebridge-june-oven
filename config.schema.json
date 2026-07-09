@@ -76,8 +76,7 @@
                   "type": "object",
                   "properties": {
                     "done": { "title": "Ring when cook is done", "type": "boolean", "default": false },
-                    "ready": { "title": "Ring when preheat/ready", "type": "boolean", "default": false },
-                    "doorOpen": { "title": "Ring on door open (not yet supported)", "type": "boolean", "default": false }
+                    "ready": { "title": "Ring when preheat/ready", "type": "boolean", "default": false }
                   }
                 }
               }
@@ -145,7 +144,6 @@
         "ovens[].doorbell.name",
         "ovens[].doorbell.triggers.done",
         "ovens[].doorbell.triggers.ready",
-        "ovens[].doorbell.triggers.doorOpen",
         "ovens[].camera.enabled",
         "ovens[].camera.name",
         "ovens[].camera.ffmpegPath",

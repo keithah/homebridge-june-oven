@@ -21,7 +21,7 @@ describe('normalizeOvenConfig new options', () => {
     expect(n.doorbell).toEqual({
       enabled: false,
       name: 'June Doorbell',
-      triggers: { done: false, ready: false, doorOpen: false },
+      triggers: { done: false, ready: false },
     });
   });
 
@@ -31,15 +31,16 @@ describe('normalizeOvenConfig new options', () => {
     expect(n.probeSensors).toEqual({ enabled: false, name: 'Food Probe' });
   });
 
-  it('passes through configured modes and doorbell triggers', () => {
+  it('passes through configured modes and supported doorbell triggers', () => {
     const n = normalizeOvenConfig({
       ...base,
-      doorbell: { enabled: true, triggers: { done: true } },
+      doorbell: { enabled: true, triggers: { done: true, doorOpen: true } as never },
       modes: [{ label: 'Broil', primitiveType: 'broil', tempF: 500 }],
       probeSensors: { enabled: true, name: 'Roast Probe' },
     });
     expect(n.doorbell.enabled).toBe(true);
-    expect(n.doorbell.triggers).toEqual({ done: true, ready: false, doorOpen: false });
+    expect(n.doorbell.triggers).toEqual({ done: true, ready: false });
+    expect('doorOpen' in n.doorbell.triggers).toBe(false);
     expect(n.modes).toEqual([{ label: 'Broil', primitiveType: 'broil', tempF: 500 }]);
     expect(n.probeSensors).toEqual({ enabled: true, name: 'Roast Probe' });
   });

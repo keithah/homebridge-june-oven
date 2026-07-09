@@ -23,7 +23,7 @@ export interface JunePlatformConfig extends PlatformConfig {
   ovens?: JuneOvenConfig[];
 }
 
-type AccessoryKind = 'thermostat' | 'preheat' | 'ready' | 'done' | 'doorbell' | 'modes' | 'probes' | 'camera';
+type AccessoryKind = 'thermostat' | 'preheat' | 'ready' | 'done' | 'doorbell' | 'modes' | 'probe' | 'camera';
 
 export class JunePlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service;
@@ -79,7 +79,7 @@ export class JunePlatform implements DynamicPlatformPlugin {
         this.bindAccessory(client, 'modes', `${oven.name || 'June'} Modes`, wanted);
       }
       if (client.config.probeSensors.enabled) {
-        this.bindAccessory(client, 'probes', `${oven.name || 'June'} Probes`, wanted);
+        this.bindAccessory(client, 'probe', `${oven.name || 'June'} Probe`, wanted);
       }
       client.start().catch(error => this.log.error(`Failed to start ${oven.name || oven.ovenId}: ${error.message}`));
     }
@@ -114,7 +114,7 @@ export class JunePlatform implements DynamicPlatformPlugin {
       attachCamera(this, accessory, client);
     } else if (kind === 'modes') {
       new JuneModeSwitchAccessory(this, accessory, client);
-    } else if (kind === 'probes') {
+    } else if (kind === 'probe') {
       new JuneProbeSensorAccessory(this, accessory, client);
     } else {
       new JuneOccupancySensorAccessory(this, accessory, client, kind);

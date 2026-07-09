@@ -21,7 +21,7 @@ export interface JuneModeConfig {
 export interface JuneDoorbellConfig {
   enabled: boolean;
   name: string;
-  triggers: { done: boolean; ready: boolean; doorOpen: boolean };
+  triggers: { done: boolean; ready: boolean };
 }
 
 export interface JuneProbeSensorsConfig {
@@ -113,7 +113,6 @@ export function normalizeOvenConfig(config: JuneOvenConfig): NormalizedJuneConfi
       triggers: {
         done: config.doorbell?.triggers?.done ?? false,
         ready: config.doorbell?.triggers?.ready ?? false,
-        doorOpen: config.doorbell?.triggers?.doorOpen ?? false,
       },
     },
     modes: (config.modes ?? [])
