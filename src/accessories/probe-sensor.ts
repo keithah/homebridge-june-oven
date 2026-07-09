@@ -17,6 +17,15 @@ export class JuneProbeSensorAccessory {
   ) {
     const { Service, Characteristic } = this.platform;
     const cfg = this.client.config.probeSensors;
+    // Remove legacy dual-probe services from earlier builds that created
+    // 'probe-left'/'probe-right' subtyped sensors before we confirmed the oven
+    // has a single probe. Otherwise a stale "Right Probe" tile lingers.
+    for (const subtype of ['probe-left', 'probe-right']) {
+      const stale = this.accessory.getServiceById(Service.TemperatureSensor, subtype);
+      if (stale) {
+        this.accessory.removeService(stale);
+      }
+    }
     this.service = this.accessory.getService(Service.TemperatureSensor) || this.accessory.addService(Service.TemperatureSensor);
     this.service.setCharacteristic(Characteristic.Name, cfg.name);
     this.client.on('telemetry', telemetry => this.update(telemetry));
