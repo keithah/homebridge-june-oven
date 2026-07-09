@@ -261,19 +261,15 @@
           </div>
 
           <hr>
-          <h6 class="mb-2">Food Probe Temperature Sensors</h6>
+          <h6 class="mb-2">Food Probe Temperature Sensor</h6>
           <div class="form-check">
             <input type="checkbox" class="form-check-input field-probeEnabled" ${oven.probeSensors?.enabled ? 'checked' : ''}>
-            <label class="form-check-label">Enable probe sensors</label>
+            <label class="form-check-label">Enable probe sensor</label>
           </div>
-          <small class="form-text june-muted june-help mb-2">Exposes the oven's food-probe temperature(s) as HomeKit Temperature Sensors, so you can automate on "probe reached 145&deg;F".</small>
+          <small class="form-text june-muted june-help mb-2">Exposes the oven's food-probe temperature as a HomeKit Temperature Sensor, so you can automate on "probe reached 145&deg;F".</small>
           <div class="form-group">
-            <label>Left Probe Name</label>
-            <input type="text" class="form-control field-probeLeft" value="${escapeHtml(oven.probeSensors?.leftName ?? 'Left Probe')}">
-          </div>
-          <div class="form-group">
-            <label>Right Probe Name</label>
-            <input type="text" class="form-control field-probeRight" value="${escapeHtml(oven.probeSensors?.rightName ?? 'Right Probe')}">
+            <label>Probe Name</label>
+            <input type="text" class="form-control field-probeName" value="${escapeHtml(oven.probeSensors?.name ?? 'Food Probe')}">
           </div>
 
           <hr>
@@ -332,8 +328,7 @@
       ['.field-cameraName', 'camera.name', 'value'],
       ['.field-cameraFfmpeg', 'camera.ffmpegPath', 'value'],
       ['.field-probeEnabled', 'probeSensors.enabled', 'checked'],
-      ['.field-probeLeft', 'probeSensors.leftName', 'value'],
-      ['.field-probeRight', 'probeSensors.rightName', 'value'],
+      ['.field-probeName', 'probeSensors.name', 'value'],
     ];
     for (const [selector, path, prop] of nested) {
       const el = card.querySelector(selector);

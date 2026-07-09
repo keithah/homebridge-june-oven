@@ -28,7 +28,7 @@ describe('normalizeOvenConfig new options', () => {
   it('defaults modes to an empty array and probeSensors to disabled', () => {
     const n = normalizeOvenConfig(base);
     expect(n.modes).toEqual([]);
-    expect(n.probeSensors).toEqual({ enabled: false, leftName: 'Left Probe', rightName: 'Right Probe' });
+    expect(n.probeSensors).toEqual({ enabled: false, name: 'Food Probe' });
   });
 
   it('passes through configured modes and doorbell triggers', () => {
@@ -36,12 +36,12 @@ describe('normalizeOvenConfig new options', () => {
       ...base,
       doorbell: { enabled: true, triggers: { done: true } },
       modes: [{ label: 'Broil', primitiveType: 'broil', tempF: 500 }],
-      probeSensors: { enabled: true, leftName: 'Roast' },
+      probeSensors: { enabled: true, name: 'Roast Probe' },
     });
     expect(n.doorbell.enabled).toBe(true);
     expect(n.doorbell.triggers).toEqual({ done: true, ready: false, doorOpen: false });
     expect(n.modes).toEqual([{ label: 'Broil', primitiveType: 'broil', tempF: 500 }]);
-    expect(n.probeSensors).toEqual({ enabled: true, leftName: 'Roast', rightName: 'Right Probe' });
+    expect(n.probeSensors).toEqual({ enabled: true, name: 'Roast Probe' });
   });
 
   it('defaults camera to disabled with a default ffmpeg path', () => {

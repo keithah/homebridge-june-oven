@@ -26,8 +26,7 @@ export interface JuneDoorbellConfig {
 
 export interface JuneProbeSensorsConfig {
   enabled: boolean;
-  leftName: string;
-  rightName: string;
+  name: string;
 }
 
 export interface JuneCameraConfig {
@@ -122,8 +121,7 @@ export function normalizeOvenConfig(config: JuneOvenConfig): NormalizedJuneConfi
       .map(m => ({ label: m.label || m.primitiveType, primitiveType: m.primitiveType, tempF: m.tempF ?? 350 })),
     probeSensors: {
       enabled: config.probeSensors?.enabled ?? false,
-      leftName: config.probeSensors?.leftName || 'Left Probe',
-      rightName: config.probeSensors?.rightName || 'Right Probe',
+      name: config.probeSensors?.name || 'Food Probe',
     },
     camera: {
       enabled: config.camera?.enabled ?? false,

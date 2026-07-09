@@ -92,12 +92,11 @@
               }
             },
             "probeSensors": {
-              "title": "Food Probe Temperature Sensors",
+              "title": "Food Probe Temperature Sensor",
               "type": "object",
               "properties": {
-                "enabled": { "title": "Enable Probe Sensors", "type": "boolean", "default": false },
-                "leftName": { "title": "Left Probe Name", "type": "string", "default": "Left Probe" },
-                "rightName": { "title": "Right Probe Name", "type": "string", "default": "Right Probe" }
+                "enabled": { "title": "Enable Probe Sensor", "type": "boolean", "default": false },
+                "name": { "title": "Probe Name", "type": "string", "default": "Food Probe" }
               }
             },
             "modes": {
@@ -151,8 +150,7 @@
         "ovens[].camera.name",
         "ovens[].camera.ffmpegPath",
         "ovens[].probeSensors.enabled",
-        "ovens[].probeSensors.leftName",
-        "ovens[].probeSensors.rightName",
+        "ovens[].probeSensors.name",
         { "key": "ovens[].modes", "type": "array", "items": ["ovens[].modes[].label", "ovens[].modes[].primitiveType", "ovens[].modes[].tempF"] }
       ]
     }

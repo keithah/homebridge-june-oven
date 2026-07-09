@@ -24,8 +24,7 @@ export interface JuneTelemetry {
   ready?: boolean;
   done?: boolean;
   connectionState?: string;
-  probeLeftC?: number;
-  probeRightC?: number;
+  probeC?: number;
   probePresent?: boolean;
 }
 
@@ -46,22 +45,18 @@ export function parseCameraFrame(data: any): JuneSnapshot | null {
 }
 
 // Confirmed live (2026-07-08): 10013 sensor_data.probe is an array of
-// { id: "left"|"right", value: <milli-C> } entries; there is no food_present
-// field, so probe presence is inferred from the array having entries.
-export function parseProbeTelemetry(data: any): Pick<JuneTelemetry, 'probeLeftC' | 'probeRightC' | 'probePresent'> {
+// { id: "left", value: <milli-C> } entries. The June oven has a single food
+// probe, so we read the first reporting entry; probe presence is inferred from
+// the array having entries (there is no food_present field).
+export function parseProbeTelemetry(data: any): Pick<JuneTelemetry, 'probeC' | 'probePresent'> {
   const probes = Array.isArray(data?.sensor_data?.probe) ? data.sensor_data.probe : undefined;
-  const out: Pick<JuneTelemetry, 'probeLeftC' | 'probeRightC' | 'probePresent'> = {};
+  const out: Pick<JuneTelemetry, 'probeC' | 'probePresent'> = {};
   if (!probes) {
     return out;
   }
-  const valueOf = (p: any) => (p && typeof p.value === 'number' ? p.value : undefined);
-  const left = valueOf(probes.find((p: any) => p?.id === 'left')) ?? valueOf(probes.find((p: any) => valueOf(p) !== undefined));
-  const right = valueOf(probes.find((p: any) => p?.id === 'right'));
-  if (typeof left === 'number') {
-    out.probeLeftC = milliCToCelsius(left);
-  }
-  if (typeof right === 'number') {
-    out.probeRightC = milliCToCelsius(right);
+  const entry = probes.find((p: any) => p && typeof p.value === 'number');
+  if (entry) {
+    out.probeC = milliCToCelsius(entry.value);
   }
   out.probePresent = probes.length > 0;
   return out;
