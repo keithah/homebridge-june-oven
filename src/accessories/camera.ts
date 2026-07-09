@@ -25,6 +25,7 @@ const PLACEHOLDER_JPEG = Buffer.from(
 interface Session {
   socket?: Socket;
   ffmpeg?: ChildProcess;
+  pump?: ReturnType<typeof setInterval>;
   targetAddress: string;
   videoPort: number;
   videoSsrc: number;
@@ -135,24 +136,25 @@ export class JuneCameraSource implements CameraStreamingDelegate {
 
   private startStream(request: StartStreamRequest, callback: StreamRequestCallback): void {
     const session = this.sessions.get(request.sessionID);
-    const snapshot = this.client.latestSnapshot;
     if (!session) {
       callback(new Error('No prepared session'));
       return;
     }
-    if (!snapshot) {
+    if (!this.client.latestSnapshot) {
       this.platform.log.warn('June camera has no frame yet (no active cook) — cannot start live stream.');
       callback(new Error('No camera frame available'));
       return;
     }
     const { video } = request;
+    // The source is a ~1 fps still feed; encode at a modest rate.
+    const fps = Math.min(video.fps && video.fps > 0 ? video.fps : 2, 5);
     const args = [
       '-loglevel', 'error',
-      '-loop', '1', '-re', '-i', snapshot.url,
+      '-f', 'image2pipe', '-vcodec', 'mjpeg', '-framerate', String(fps), '-i', 'pipe:0',
       '-an', '-sn', '-dn',
       '-codec:v', 'libx264', '-pix_fmt', 'yuv420p', '-profile:v', 'baseline',
       '-preset', 'ultrafast', '-tune', 'zerolatency',
-      '-r', String(video.fps),
+      '-r', String(fps),
       '-vf', `scale=${video.width}:${video.height}`,
       '-b:v', `${video.max_bit_rate}k`, '-bufsize', `${2 * video.max_bit_rate}k`, '-maxrate', `${video.max_bit_rate}k`,
       '-payload_type', String(video.pt),
@@ -176,12 +178,44 @@ export class JuneCameraSource implements CameraStreamingDelegate {
     proc.on('error', error =>
       this.platform.log.error(`June camera ffmpeg error: ${error.message} (is ffmpeg installed at "${ffmpegPath}"?)`),
     );
+    proc.stdin?.on('error', () => { /* ignore EPIPE once ffmpeg exits */ });
     proc.stderr?.on('data', data => this.platform.log.debug(`[june-camera ffmpeg] ${data}`));
     proc.on('exit', (code, signal) => {
       if (code !== null && code !== 0 && signal !== 'SIGKILL') {
         this.platform.log.warn(`June camera ffmpeg exited with code ${code}`);
       }
     });
+
+    // Pump the oven's latest still into ffmpeg at ~fps, refetching only when the
+    // WebSocket delivers a new frame (10011 updates the URL ~1/s during a cook).
+    // This is what makes the live view actually advance instead of freezing on
+    // the frame that was current when the stream started.
+    let lastUrl: string | undefined;
+    let lastFrame: Buffer | undefined;
+    let fetching = false;
+    const pump = async () => {
+      const snap = this.client.latestSnapshot;
+      if (snap && snap.url !== lastUrl && !fetching) {
+        fetching = true;
+        lastUrl = snap.url;
+        try {
+          const response = await fetch(snap.url);
+          if (response.ok) {
+            lastFrame = Buffer.from(await response.arrayBuffer());
+          }
+        } catch {
+          // keep the previous frame on a transient fetch failure
+        } finally {
+          fetching = false;
+        }
+      }
+      if (lastFrame && proc.stdin && !proc.stdin.destroyed) {
+        proc.stdin.write(lastFrame);
+      }
+    };
+    session.pump = setInterval(() => { void pump(); }, Math.round(1000 / fps));
+    void pump();
+
     callback();
   }
 
@@ -189,6 +223,16 @@ export class JuneCameraSource implements CameraStreamingDelegate {
     const session = this.sessions.get(sessionID);
     if (!session) {
       return;
+    }
+    if (session.pump) {
+      clearInterval(session.pump);
+    }
+    if (session.ffmpeg?.stdin && !session.ffmpeg.stdin.destroyed) {
+      try {
+        session.ffmpeg.stdin.end();
+      } catch {
+        // stdin may already be closed
+      }
     }
     session.ffmpeg?.kill('SIGKILL');
     try {
