@@ -67,11 +67,10 @@ export class JuneCameraSource implements CameraStreamingDelegate {
             levels: [hap.H264Level.LEVEL3_1, hap.H264Level.LEVEL3_2, hap.H264Level.LEVEL4_0],
           },
         },
-        audio: {
-          codecs: [
-            { type: hap.AudioStreamingCodecType.AAC_ELD, samplerate: hap.AudioStreamingSamplerate.KHZ_16 },
-          ],
-        },
+        // No audio: the oven's interior camera is a video-only still feed. Advertising
+        // an audio codec would require prepareStream to return an audio SRTP block, and
+        // omitting it crashes the stream ("Audio was enabled but not supplied"). audio is
+        // optional in CameraStreamingOptions, so we leave it out.
       },
     });
   }
