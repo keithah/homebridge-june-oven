@@ -21,7 +21,6 @@ vi.mock('./june-client', async () => {
           triggers: {
             done: config.doorbell?.triggers?.done ?? false,
             ready: config.doorbell?.triggers?.ready ?? false,
-            doorOpen: config.doorbell?.triggers?.doorOpen ?? false,
           },
         },
         camera: {

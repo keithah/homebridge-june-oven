@@ -11,9 +11,9 @@ is **opt-in** via the Config UI (default off) so existing users see no behavior 
 
 Four features, in priority order:
 
-1. **Cook-done doorbell** — ships now as a plain Doorbell (no camera), architected to become a
-   Video Doorbell later once the snapshot works. Offered as an option alongside the existing
-   ready/done sensors; users can enable either, both, or neither.
+1. **Cook-done doorbell** — ships as a Doorbell, and becomes a Video Doorbell when the interior
+   camera is also enabled. Offered as an option alongside the existing ready/done sensors; users can
+   enable either, both, or neither.
 2. **Interior camera** (snapshot + ffmpeg live view) — BUILT. Spike A solved; snapshot verified
    live end-to-end. Combines with the doorbell into a Video Doorbell.
 3. **Food probe temperature sensor**
@@ -63,8 +63,8 @@ frida, or app login required; our plugin's existing WebSocket already receives i
 `10013` `sensor_data.probe` is an **array** of `{ id: "left"|"right", value: <milli-C> }`. There is
 no `food_present` field; probe presence = the array has entries. Confirmed live: cavity `61100`
 (142°F) vs. probe `{id:"left",value:18200}` (65°F water). `parseProbeTelemetry` parses this shape.
-- **Food-probe temperature fields** in `10013` — the spec names `left_probe`/`right_probe`/
-  `probe_temperature`, but the exact JSON path was not pinned down in a live probe cook.
+- **Food-probe temperature fields** in `10013` — confirmed as `sensor_data.probe`, an array of
+  `{id, value}` entries where `value` is milli-°C.
 - **Door-open** is only observable as a command *rejection reason* (`10020 status:"door-open"`),
   not as a push event. A live door-state signal is unconfirmed.
 - **The full mode list** — only `bake`/`roast` are confirmed on-oven; the `/2/devices/{id}/features`
@@ -80,10 +80,10 @@ no `food_present` field; probe presence = the array has entries. Confirmed live:
 ## Feature 1 — Cook-done doorbell
 
 A **Doorbell** accessory that fires a `ProgrammableSwitchEvent` (single-press) when a configured
-trigger occurs, producing a HomeKit doorbell notification on phone + Apple TV. It ships **now as a
-plain doorbell (no camera)** — the notification is an image-less banner, zero ffmpeg, no
-dependency on any spike. It is offered as an option **alongside** the existing ready/done
-occupancy sensors; users can enable either, both, or neither.
+trigger occurs, producing a HomeKit doorbell notification on phone + Apple TV. When the camera is
+also enabled, a Camera service attaches to the same accessory so HomeKit treats it as a Video
+Doorbell and includes the latest oven still in the notification. It is offered as an option
+**alongside** the existing ready/done occupancy sensors; users can enable either, both, or neither.
 
 - Triggers are **configurable** (all default off):
   - `done` — the cook-complete transition the client already computes (`JuneTelemetry.done`).
@@ -91,11 +91,8 @@ occupancy sensors; users can enable either, both, or neither.
 - Config (per oven): `doorbell` object — `enabled` (bool, default false), `triggers` (object with
   `done`/`ready` booleans, all default false), `name`.
 
-**Architected for a later Video Doorbell.** The accessory is structured so that when feature 2's
-snapshot camera lands (post Spike A) and the user enables the camera, a Camera service is attached
-to this same accessory — turning it into a Video Doorbell whose notification carries the JPEG food
-photo — without restructuring or re-pairing. Enabling the camera is what promotes plain →
-video; the doorbell itself never needs Spike A.
+Enabling the camera is what promotes plain doorbell to video doorbell; the doorbell can still be
+used without the camera for image-less HomeKit notifications.
 
 ## Feature 2 — Interior camera (snapshot-only)
 
@@ -113,7 +110,7 @@ There is deliberately no continuous/HKSV recording.
   signed still URL from the telemetry stream; the snapshot handler fetches it (with a short cache
   to avoid hammering the CDN) and returns the bytes. When no cook is active / no still is
   available, return a static placeholder image.
-- Depends on Spike A. Config (per oven): `camera.enabled` (bool, default false), `camera.name`.
+- Config (per oven): `camera.enabled` (bool, default false), `camera.name`, `camera.ffmpegPath`.
 - Implemented as part of the same accessory as the doorbell (feature 1) when both are enabled;
   camera-only (no doorbell triggers) is also valid.
 
