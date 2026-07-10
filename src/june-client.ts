@@ -24,6 +24,42 @@ export interface JuneTelemetry {
   ready?: boolean;
   done?: boolean;
   connectionState?: string;
+  probeC?: number;
+  probePresent?: boolean;
+}
+
+export interface JuneSnapshot {
+  url: string;
+  contentType: string;
+}
+
+// A 10011 camera frame carries a pre-signed still-JPEG URL (image_url = CDN,
+// signed_url = direct S3), valid ~300 s, pushed ~1/s during a cook.
+export function parseCameraFrame(data: any): JuneSnapshot | null {
+  const url = typeof data?.image_url === 'string' ? data.image_url
+    : typeof data?.signed_url === 'string' ? data.signed_url : undefined;
+  if (!url) {
+    return null;
+  }
+  return { url, contentType: typeof data?.content_type === 'string' ? data.content_type : 'image/jpeg' };
+}
+
+// Confirmed live (2026-07-08): 10013 sensor_data.probe is an array of
+// { id: "left", value: <milli-C> } entries. The June oven has a single food
+// probe, so we read the first reporting entry; probe presence is inferred from
+// the array having entries (there is no food_present field).
+export function parseProbeTelemetry(data: any): Pick<JuneTelemetry, 'probeC' | 'probePresent'> {
+  const probes = Array.isArray(data?.sensor_data?.probe) ? data.sensor_data.probe : undefined;
+  const out: Pick<JuneTelemetry, 'probeC' | 'probePresent'> = {};
+  if (!probes) {
+    return out;
+  }
+  const entry = probes.find((p: any) => p && typeof p.value === 'number');
+  if (entry) {
+    out.probeC = milliCToCelsius(entry.value);
+  }
+  out.probePresent = probes.length > 0;
+  return out;
 }
 
 export interface JuneClientEvents {
@@ -47,6 +83,11 @@ export class JuneClient extends EventEmitter {
   private lastActive = false;
   private lastCancelled = false;
   private lastTargetTempC?: number;
+  private snapshot?: JuneSnapshot;
+
+  public get latestSnapshot(): JuneSnapshot | undefined {
+    return this.snapshot;
+  }
 
   constructor(config: JuneOvenConfig, private readonly log: Pick<Console, 'debug' | 'warn' | 'error'> = console) {
     super();
@@ -72,6 +113,11 @@ export class JuneClient extends EventEmitter {
   public async preheat(mode = this.config.defaultMode, tempF = this.config.defaultTempF): Promise<string | null> {
     this.lastCancelled = false;
     return this.sendCommand(MC_PREHEAT, { primitive_type: mode, temperature_cavity: fahrenheitToMilliC(tempF) });
+  }
+
+  public async startMode(primitiveType: string, tempF: number): Promise<string | null> {
+    this.lastCancelled = false;
+    return this.sendCommand(MC_PREHEAT, { primitive_type: primitiveType, temperature_cavity: fahrenheitToMilliC(tempF) });
   }
 
   public async cancel(): Promise<string | null> {
@@ -203,7 +249,15 @@ export class JuneClient extends EventEmitter {
       this.applyTelemetry({
         currentTempC: typeof data.sensor_data?.cavity === 'number' ? milliCToCelsius(data.sensor_data.cavity) : undefined,
         ready: typeof data.cook_state_data?.progress === 'number' && data.cook_state_data.progress >= 0.995,
+        ...parseProbeTelemetry(data),
       });
+      return;
+    }
+    if (frame.message_code === 10011) {
+      const snapshot = parseCameraFrame(data);
+      if (snapshot) {
+        this.snapshot = snapshot;
+      }
       return;
     }
     if (frame.message_code === 10015 || frame.message_code === 10016) {

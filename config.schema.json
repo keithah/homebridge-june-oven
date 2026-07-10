@@ -66,6 +66,53 @@
                 { "title": "Celsius", "enum": ["C"] }
               ]
             },
+            "doorbell": {
+              "title": "Cook Doorbell",
+              "type": "object",
+              "properties": {
+                "enabled": { "title": "Enable Doorbell", "type": "boolean", "default": false },
+                "name": { "title": "Doorbell Name", "type": "string", "default": "June Doorbell" },
+                "triggers": {
+                  "type": "object",
+                  "properties": {
+                    "done": { "title": "Ring when cook is done", "type": "boolean", "default": false },
+                    "ready": { "title": "Ring when preheat/ready", "type": "boolean", "default": false }
+                  }
+                }
+              }
+            },
+            "camera": {
+              "title": "Interior Camera",
+              "type": "object",
+              "properties": {
+                "enabled": { "title": "Enable Camera", "type": "boolean", "default": false, "description": "Shows the oven's interior camera (a still refreshed ~1x/sec while cooking). If Doorbell is also enabled, they combine into a Video Doorbell so the notification shows a photo of your food." },
+                "name": { "title": "Camera Name", "type": "string", "default": "June Camera" },
+                "ffmpegPath": { "title": "ffmpeg Path", "type": "string", "default": "ffmpeg", "description": "Path to ffmpeg, used only for tap-to-view live streaming. Snapshots work without it. Leave as 'ffmpeg' to use the system install." }
+              }
+            },
+            "probeSensors": {
+              "title": "Food Probe Temperature Sensor",
+              "type": "object",
+              "properties": {
+                "enabled": { "title": "Enable Probe Sensor", "type": "boolean", "default": false },
+                "name": { "title": "Probe Name", "type": "string", "default": "Food Probe" }
+              }
+            },
+            "modes": {
+              "title": "Cook Mode Switches",
+              "type": "array",
+              "default": [],
+              "description": "Add a switch for each cook mode you want. primitiveType is the June mode id (e.g. bake, roast, broil, air_fry, toast) — you can enter any value the oven supports.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "label": { "title": "Switch Name", "type": "string" },
+                  "primitiveType": { "title": "June Mode (primitive_type)", "type": "string" },
+                  "tempF": { "title": "Temperature (F)", "type": "integer", "default": 350, "minimum": 100, "maximum": 550 }
+                },
+                "required": ["primitiveType"]
+              }
+            },
             "ovenId": { "type": "string", "hidden": true },
             "deviceId": { "type": "string", "hidden": true },
             "deviceName": { "type": "string", "hidden": true },
@@ -92,7 +139,17 @@
         "ovens[].doneSensor",
         "ovens[].defaultMode",
         "ovens[].defaultTempF",
-        "ovens[].tempUnit"
+        "ovens[].tempUnit",
+        "ovens[].doorbell.enabled",
+        "ovens[].doorbell.name",
+        "ovens[].doorbell.triggers.done",
+        "ovens[].doorbell.triggers.ready",
+        "ovens[].camera.enabled",
+        "ovens[].camera.name",
+        "ovens[].camera.ffmpegPath",
+        "ovens[].probeSensors.enabled",
+        "ovens[].probeSensors.name",
+        { "key": "ovens[].modes", "type": "array", "items": ["ovens[].modes[].label", "ovens[].modes[].primitiveType", "ovens[].modes[].tempF"] }
       ]
     }
   ]

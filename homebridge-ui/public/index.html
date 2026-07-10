@@ -221,7 +221,73 @@
             <input type="number" class="form-control field-defaultTempF" min="${tempMin}" max="${tempMax}" value="${tempValue}">
             <small class="form-text june-muted june-help">Temperature the preheat switch above targets. Setting the thermostat's target temperature directly in the Home app works independently of this.</small>
           </div>
+
+          <hr>
+          <h6 class="mb-2">Cook Doorbell</h6>
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input field-doorbellEnabled" ${oven.doorbell?.enabled ? 'checked' : ''}>
+            <label class="form-check-label">Enable doorbell</label>
+          </div>
+          <small class="form-text june-muted june-help mb-2">Adds a HomeKit Doorbell that "rings" (a rich notification on your phone and Apple TV) on the events below. If the camera is also enabled, it becomes a Video Doorbell whose notification shows a photo of your food.</small>
+          <div class="form-group">
+            <label>Doorbell Name</label>
+            <input type="text" class="form-control field-doorbellName" value="${escapeHtml(oven.doorbell?.name ?? 'June Doorbell')}">
+          </div>
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input field-doorbellDone" ${oven.doorbell?.triggers?.done ? 'checked' : ''}>
+            <label class="form-check-label">Ring when a cook finishes ("done")</label>
+          </div>
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input field-doorbellReady" ${oven.doorbell?.triggers?.ready ? 'checked' : ''}>
+            <label class="form-check-label">Ring when preheat is ready</label>
+          </div>
+          <small class="form-text june-muted june-help mb-3">Pick which moments ring the doorbell. Turn on notifications for it in the Home app.</small>
+
+          <hr>
+          <h6 class="mb-2">Interior Camera</h6>
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input field-cameraEnabled" ${oven.camera?.enabled ? 'checked' : ''}>
+            <label class="form-check-label">Enable camera</label>
+          </div>
+          <small class="form-text june-muted june-help mb-2">Shows the oven's interior camera (a still refreshed about once a second while cooking). Snapshots work with no extra setup; tap-to-view live video uses ffmpeg if it's available. Enable this together with the doorbell for a Video Doorbell.</small>
+          <div class="form-group">
+            <label>Camera Name</label>
+            <input type="text" class="form-control field-cameraName" value="${escapeHtml(oven.camera?.name ?? 'June Camera')}">
+          </div>
+          <div class="form-group">
+            <label>ffmpeg Path</label>
+            <input type="text" class="form-control field-cameraFfmpeg" value="${escapeHtml(oven.camera?.ffmpegPath ?? 'ffmpeg')}">
+            <small class="form-text june-muted june-help">Only used for tap-to-view live video. Leave as "ffmpeg" to use the system install.</small>
+          </div>
+
+          <hr>
+          <h6 class="mb-2">Food Probe Temperature Sensor</h6>
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input field-probeEnabled" ${oven.probeSensors?.enabled ? 'checked' : ''}>
+            <label class="form-check-label">Enable probe sensor</label>
+          </div>
+          <small class="form-text june-muted june-help mb-2">Exposes the oven's food-probe temperature as a HomeKit Temperature Sensor, so you can automate on "probe reached 145&deg;F".</small>
+          <div class="form-group">
+            <label>Probe Name</label>
+            <input type="text" class="form-control field-probeName" value="${escapeHtml(oven.probeSensors?.name ?? 'Food Probe')}">
+          </div>
+
+          <hr>
+          <h6 class="mb-2">Cook Mode Switches</h6>
+          <small class="form-text june-muted june-help mb-2">Add a switch for any cook mode. The mode id is what the oven calls it (e.g. <code>bake</code>, <code>roast</code>, <code>broil</code>, <code>air_fry</code>, <code>toast</code>) — you can enter any mode the oven supports. Turning one on starts that cook; they're mutually exclusive.</small>
+          <div class="june-modes">${(oven.modes || []).map((mode, modeIndex) => modeRowHtml(mode, modeIndex)).join('')}</div>
+          <button class="btn btn-sm btn-outline-secondary add-mode" type="button">Add mode</button>
         </div>
+      </div>`;
+  }
+
+  function modeRowHtml(mode, modeIndex) {
+    return `
+      <div class="mode-row" data-mode-index="${modeIndex}" style="display:flex; gap:0.5rem; margin-bottom:0.5rem;">
+        <input type="text" class="form-control field-mode-label" placeholder="Name (e.g. Broil)" value="${escapeHtml(mode.label ?? '')}">
+        <input type="text" class="form-control field-mode-type" placeholder="Mode id (e.g. broil)" value="${escapeHtml(mode.primitiveType ?? '')}">
+        <input type="number" class="form-control field-mode-temp" placeholder="&deg;F" style="max-width:6rem;" value="${mode.tempF ?? 350}">
+        <button class="btn btn-sm btn-outline-danger remove-mode" type="button">&times;</button>
       </div>`;
   }
 
@@ -253,8 +319,74 @@
       updateOven(index, 'defaultTempF', Number.isFinite(defaultTempF) ? defaultTempF : 350);
     });
 
+    const nested = [
+      ['.field-doorbellEnabled', 'doorbell.enabled', 'checked'],
+      ['.field-doorbellName', 'doorbell.name', 'value'],
+      ['.field-doorbellDone', 'doorbell.triggers.done', 'checked'],
+      ['.field-doorbellReady', 'doorbell.triggers.ready', 'checked'],
+      ['.field-cameraEnabled', 'camera.enabled', 'checked'],
+      ['.field-cameraName', 'camera.name', 'value'],
+      ['.field-cameraFfmpeg', 'camera.ffmpegPath', 'value'],
+      ['.field-probeEnabled', 'probeSensors.enabled', 'checked'],
+      ['.field-probeName', 'probeSensors.name', 'value'],
+    ];
+    for (const [selector, path, prop] of nested) {
+      const el = card.querySelector(selector);
+      if (el) {
+        el.addEventListener('change', () => updateOvenPath(index, path, prop === 'checked' ? el.checked : el.value));
+      }
+    }
+
+    card.querySelectorAll('.mode-row').forEach(row => {
+      const modeIndex = Number(row.dataset.modeIndex);
+      row.querySelector('.field-mode-label').addEventListener('change', event => updateMode(index, modeIndex, 'label', event.target.value));
+      row.querySelector('.field-mode-type').addEventListener('change', event => updateMode(index, modeIndex, 'primitiveType', event.target.value));
+      row.querySelector('.field-mode-temp').addEventListener('change', event => updateMode(index, modeIndex, 'tempF', Number(event.target.value) || 350));
+      row.querySelector('.remove-mode').addEventListener('click', () => removeMode(index, modeIndex));
+    });
+    card.querySelector('.add-mode').addEventListener('click', () => addMode(index));
+
     card.querySelector('.remove-oven').addEventListener('click', () => removeOven(index));
     card.querySelector('.check-status').addEventListener('click', () => checkStatus(index));
+  }
+
+  async function saveConfig() {
+    await homebridge.updatePluginConfig(currentConfig);
+    await homebridge.savePluginConfig();
+  }
+
+  async function updateOvenPath(index, path, value) {
+    const keys = path.split('.');
+    let obj = currentConfig[0].ovens[index];
+    for (let i = 0; i < keys.length - 1; i++) {
+      obj[keys[i]] = obj[keys[i]] || {};
+      obj = obj[keys[i]];
+    }
+    obj[keys[keys.length - 1]] = value;
+    await saveConfig();
+    checkDuplicateNames();
+  }
+
+  async function updateMode(index, modeIndex, key, value) {
+    const oven = currentConfig[0].ovens[index];
+    oven.modes = oven.modes || [];
+    oven.modes[modeIndex] = { ...oven.modes[modeIndex], [key]: value };
+    await saveConfig();
+  }
+
+  async function addMode(index) {
+    const oven = currentConfig[0].ovens[index];
+    oven.modes = oven.modes || [];
+    oven.modes.push({ label: '', primitiveType: '', tempF: 350 });
+    await saveConfig();
+    renderOvens();
+  }
+
+  async function removeMode(index, modeIndex) {
+    const oven = currentConfig[0].ovens[index];
+    (oven.modes || []).splice(modeIndex, 1);
+    await saveConfig();
+    renderOvens();
   }
 
   async function updateOven(index, key, value, { rerender } = {}) {

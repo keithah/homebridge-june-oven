@@ -12,6 +12,29 @@ export const MC_TEMP = 11005;
 export const MC_CANCEL = 11004;
 export const MC_KEEPALIVE = 11011;
 
+export interface JuneModeConfig {
+  label: string;
+  primitiveType: string;
+  tempF: number;
+}
+
+export interface JuneDoorbellConfig {
+  enabled: boolean;
+  name: string;
+  triggers: { done: boolean; ready: boolean };
+}
+
+export interface JuneProbeSensorsConfig {
+  enabled: boolean;
+  name: string;
+}
+
+export interface JuneCameraConfig {
+  enabled: boolean;
+  name: string;
+  ffmpegPath: string;
+}
+
 export interface JuneOvenConfig {
   name?: string;
   preheatSwitchName?: string;
@@ -20,6 +43,10 @@ export interface JuneOvenConfig {
   defaultMode?: string;
   defaultTempF?: number;
   tempUnit?: 'F' | 'C';
+  doorbell?: Partial<Omit<JuneDoorbellConfig, 'triggers'>> & { triggers?: Partial<JuneDoorbellConfig['triggers']> };
+  modes?: JuneModeConfig[];
+  probeSensors?: Partial<JuneProbeSensorsConfig>;
+  camera?: Partial<JuneCameraConfig>;
   ovenId: string;
   deviceId: string;
   deviceName: string;
@@ -39,6 +66,10 @@ export interface NormalizedJuneConfig extends JuneOvenConfig {
   defaultMode: string;
   defaultTempF: number;
   tempUnit: 'F' | 'C';
+  doorbell: JuneDoorbellConfig;
+  modes: JuneModeConfig[];
+  probeSensors: JuneProbeSensorsConfig;
+  camera: JuneCameraConfig;
   accessToken: string;
   refreshToken: string;
   clientId: string;
@@ -76,6 +107,26 @@ export function normalizeOvenConfig(config: JuneOvenConfig): NormalizedJuneConfi
     baseUrl: config.baseUrl || JUNE_API_URL,
     messagingUrl: config.messagingUrl || JUNE_MESSAGING_URL,
     wsUrl: config.wsUrl || JUNE_WS_URL,
+    doorbell: {
+      enabled: config.doorbell?.enabled ?? false,
+      name: config.doorbell?.name || 'June Doorbell',
+      triggers: {
+        done: config.doorbell?.triggers?.done ?? false,
+        ready: config.doorbell?.triggers?.ready ?? false,
+      },
+    },
+    modes: (config.modes ?? [])
+      .filter(m => m && typeof m.primitiveType === 'string' && m.primitiveType.length > 0)
+      .map(m => ({ label: m.label || m.primitiveType, primitiveType: m.primitiveType, tempF: m.tempF ?? 350 })),
+    probeSensors: {
+      enabled: config.probeSensors?.enabled ?? false,
+      name: config.probeSensors?.name || 'Food Probe',
+    },
+    camera: {
+      enabled: config.camera?.enabled ?? false,
+      name: config.camera?.name || 'June Camera',
+      ffmpegPath: config.camera?.ffmpegPath || 'ffmpeg',
+    },
   };
 }
 
