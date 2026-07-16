@@ -14,9 +14,9 @@ jobs:
         # Every Node version this plugin's engines field supports.
         node-version: [18.20.4, 20.19.0, 22.12.0, 24]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -34,9 +34,9 @@ jobs:
         # verifies the plugin compiles there.
         node-version: [20.19.0, 22.12.0, 24]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
