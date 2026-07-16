@@ -9,6 +9,8 @@ import type { JunePlatform } from '../platform';
  */
 export class JuneDoorbellAccessory {
   private readonly service: Service;
+  private ready = false;
+  private done = false;
 
   constructor(
     private readonly platform: JunePlatform,
@@ -23,7 +25,15 @@ export class JuneDoorbellAccessory {
 
   private update(telemetry: JuneTelemetry): void {
     const triggers = this.client.config.doorbell.triggers;
-    if ((triggers.done && telemetry.done) || (triggers.ready && telemetry.ready)) {
+    const readyEdge = telemetry.ready === true && !this.ready;
+    const doneEdge = telemetry.done === true && !this.done;
+    if (typeof telemetry.ready === 'boolean') {
+      this.ready = telemetry.ready;
+    }
+    if (typeof telemetry.done === 'boolean') {
+      this.done = telemetry.done;
+    }
+    if ((triggers.done && doneEdge) || (triggers.ready && readyEdge)) {
       this.press();
     }
   }

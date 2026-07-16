@@ -39,6 +39,12 @@ export class JunePlatform implements DynamicPlatformPlugin {
     this.Service = api.hap.Service;
     this.Characteristic = api.hap.Characteristic;
     this.api.on('didFinishLaunching', () => this.discover());
+    this.api.on('shutdown', () => {
+      for (const client of this.clients) {
+        client.stop();
+      }
+      this.clients.length = 0;
+    });
   }
 
   public configureAccessory(accessory: PlatformAccessory): void {

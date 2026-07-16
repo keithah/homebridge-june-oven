@@ -4,7 +4,9 @@ vi.mock('./june-client', async () => {
   const { EventEmitter } = await import('events');
 
   class FakeJuneClient extends EventEmitter {
+    static readonly instances: FakeJuneClient[] = [];
     public readonly config: any;
+    public readonly stop = vi.fn();
 
     constructor(config: any) {
       super();
@@ -34,6 +36,7 @@ vi.mock('./june-client', async () => {
           name: config.probeSensors?.name || 'Food Probe',
         },
       };
+      FakeJuneClient.instances.push(this);
     }
 
     public start(): Promise<void> {
@@ -120,6 +123,7 @@ class FakeAccessory {
 
 function createApi() {
   const launchCallbacks: Array<() => void> = [];
+  const shutdownCallbacks: Array<() => void> = [];
   const registered: FakeAccessory[] = [];
   const unregistered: FakeAccessory[] = [];
   const Service = {
@@ -156,6 +160,8 @@ function createApi() {
       on: (event: string, callback: () => void) => {
         if (event === 'didFinishLaunching') {
           launchCallbacks.push(callback);
+        } else if (event === 'shutdown') {
+          shutdownCallbacks.push(callback);
         }
       },
       platformAccessory: FakeAccessory,
@@ -163,6 +169,7 @@ function createApi() {
       unregisterPlatformAccessories: (_plugin: string, _platform: string, accessories: FakeAccessory[]) => unregistered.push(...accessories),
     },
     launch: () => launchCallbacks.forEach(callback => callback()),
+    shutdown: () => shutdownCallbacks.forEach(callback => callback()),
     registered,
     unregistered,
   };
@@ -222,5 +229,24 @@ describe('JunePlatform probe accessory registration', () => {
     launch();
 
     expect(unregistered).toContain(legacy);
+  });
+
+  it('stops every client during Homebridge shutdown', async () => {
+    const { JunePlatform } = await import('./platform');
+    const { JuneClient } = await import('./june-client') as any;
+    JuneClient.instances.length = 0;
+    const { api, launch, shutdown } = createApi();
+    new JunePlatform(console, {
+      platform: 'JuneOven',
+      ovens: [{
+        ovenId: 'oven-1', deviceId: 'device', deviceName: 'Homebridge', password: 'password',
+        ed25519SeedHex: 'ab', readySensor: false, doneSensor: false, preheatSwitchName: '',
+      }],
+    }, api as never);
+    launch();
+
+    shutdown();
+
+    expect(JuneClient.instances[0].stop).toHaveBeenCalledOnce();
   });
 });

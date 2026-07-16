@@ -16,6 +16,7 @@ import {
   JuneOvenConfig,
   signedFrame,
 } from './protocol';
+import { fetchWithTimeout } from './http';
 
 export interface JuneTelemetry {
   currentTempC?: number;
@@ -79,6 +80,10 @@ export class JuneClient extends EventEmitter {
   private keepalive?: NodeJS.Timeout;
   private reconnect?: NodeJS.Timeout;
   private statusPoll?: NodeJS.Timeout;
+  private connectPromise?: Promise<void>;
+  private refreshPromise?: Promise<void>;
+  private statusPromise?: Promise<void>;
+  private stopped = false;
   private readonly pending = new Map<number, (status: string | null) => void>();
   private lastActive = false;
   private lastCancelled = false;
@@ -95,19 +100,28 @@ export class JuneClient extends EventEmitter {
   }
 
   public async start(): Promise<void> {
+    this.stopped = false;
     await this.refreshToken();
     await this.fetchStatus().catch(error => this.warn(`Initial status failed: ${error.message}`));
-    this.connect();
+    void this.connect().catch(error => this.warn(`WebSocket connection failed: ${error.message}`));
     this.statusPoll = setInterval(() => {
       this.fetchStatus().catch(error => this.warn(`Status poll failed: ${error.message}`));
     }, 60_000);
   }
 
   public stop(): void {
+    this.stopped = true;
     clearInterval(this.keepalive);
     clearInterval(this.statusPoll);
     clearTimeout(this.reconnect);
-    this.ws?.close();
+    this.reconnect = undefined;
+    const socket = this.ws;
+    this.ws = undefined;
+    socket?.close();
+    for (const resolve of this.pending.values()) {
+      resolve(null);
+    }
+    this.pending.clear();
   }
 
   public async preheat(mode = this.config.defaultMode, tempF = this.config.defaultTempF): Promise<string | null> {
@@ -126,7 +140,22 @@ export class JuneClient extends EventEmitter {
   }
 
   public async refreshToken(): Promise<void> {
-    const response = await fetch(`${this.config.baseUrl}/2/devices/register`, {
+    if (this.refreshPromise) {
+      return this.refreshPromise;
+    }
+    const refresh = this.performRefreshToken();
+    this.refreshPromise = refresh;
+    try {
+      await refresh;
+    } finally {
+      if (this.refreshPromise === refresh) {
+        this.refreshPromise = undefined;
+      }
+    }
+  }
+
+  private async performRefreshToken(): Promise<void> {
+    const response = await fetchWithTimeout(`${this.config.baseUrl}/2/devices/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'User-Agent': JUNE_USER_AGENT },
       body: JSON.stringify({
@@ -144,24 +173,44 @@ export class JuneClient extends EventEmitter {
     if (!response.ok) {
       throw new Error(`Token refresh failed: ${response.status}`);
     }
-    const body = await response.json() as { token: { access_token: string; refresh_token?: string } };
-    this.config.accessToken = body.token.access_token;
-    this.config.refreshToken = body.token.refresh_token || this.config.refreshToken;
+    const body = await response.json() as unknown;
+    const token = parseTokenResponse(body);
+    this.config.accessToken = token.accessToken;
+    this.config.refreshToken = token.refreshToken || this.config.refreshToken;
     this.emit('token', { accessToken: this.config.accessToken, refreshToken: this.config.refreshToken });
   }
 
-  public async fetchStatus(autoRefresh = true): Promise<void> {
-    const response = await fetch(`${this.config.messagingUrl}/1/messaging/device/${this.config.ovenId}/status`, {
+  public async fetchStatus(): Promise<void> {
+    if (this.statusPromise) {
+      return this.statusPromise;
+    }
+    const status = this.performFetchStatus(true);
+    this.statusPromise = status;
+    try {
+      await status;
+    } finally {
+      if (this.statusPromise === status) {
+        this.statusPromise = undefined;
+      }
+    }
+  }
+
+  private async performFetchStatus(autoRefresh: boolean): Promise<void> {
+    const response = await fetchWithTimeout(`${this.config.messagingUrl}/1/messaging/device/${this.config.ovenId}/status`, {
       headers: { Authorization: `Bearer ${this.config.accessToken}` },
     });
     if (response.status === 401 && autoRefresh) {
       await this.refreshToken();
-      return this.fetchStatus(false);
+      return this.performFetchStatus(false);
     }
     if (!response.ok) {
       throw new Error(`Status failed: ${response.status}`);
     }
-    const status = await response.json() as {
+    const statusValue = await response.json() as unknown;
+    if (!statusValue || typeof statusValue !== 'object' || Array.isArray(statusValue)) {
+      throw new Error('Invalid June status response.');
+    }
+    const status = statusValue as {
       connection_state?: string;
       device_state?: { data?: { state?: string } };
       cook_plan?: { data?: { food?: { plan?: { steps?: Array<{ temperature_cavity?: number }> } } } };
@@ -175,28 +224,69 @@ export class JuneClient extends EventEmitter {
     });
   }
 
-  private connect(): void {
-    this.ws = new WebSocket(this.config.wsUrl, {
+  private connect(): Promise<void> {
+    if (this.stopped) {
+      return Promise.reject(new Error('June client is stopped.'));
+    }
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      return Promise.resolve();
+    }
+    if (this.connectPromise) {
+      return this.connectPromise;
+    }
+    const socket = new WebSocket(this.config.wsUrl, {
       headers: { Authorization: `Bearer ${this.config.accessToken}`, 'User-Agent': JUNE_USER_AGENT },
       perMessageDeflate: false,
     });
-    this.ws.on('open', () => {
+    this.ws = socket;
+    const connecting = new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve);
+      socket.once('close', () => reject(new Error('June messaging socket closed before connecting.')));
+      socket.once('error', reject);
+    });
+    this.connectPromise = connecting;
+    socket.on('open', () => {
+      if (this.ws !== socket || this.stopped) {
+        return;
+      }
+      clearInterval(this.keepalive);
       this.sendKeepalive().catch(error => this.warn(`Keepalive failed: ${error.message}`));
       this.keepalive = setInterval(() => this.sendKeepalive().catch(error => this.warn(`Keepalive failed: ${error.message}`)), 7000);
     });
-    this.ws.on('message', message => this.handleMessage(message.toString()));
-    this.ws.on('close', () => this.scheduleReconnect());
-    this.ws.on('error', error => this.warn(`WebSocket error: ${error.message}`));
+    socket.on('message', message => this.handleMessage(message.toString()));
+    socket.on('close', () => {
+      if (this.ws === socket) {
+        this.ws = undefined;
+        this.scheduleReconnect();
+      }
+    });
+    socket.on('error', error => {
+      this.warn(`WebSocket error: ${error.message}`);
+      if (this.ws === socket && socket.readyState !== WebSocket.OPEN) {
+        this.ws = undefined;
+        socket.close();
+        this.scheduleReconnect();
+      }
+    });
+    void connecting.finally(() => {
+      if (this.connectPromise === connecting) {
+        this.connectPromise = undefined;
+      }
+    }).catch(() => undefined);
+    return connecting;
   }
 
   private scheduleReconnect(): void {
     clearInterval(this.keepalive);
+    if (this.stopped) {
+      return;
+    }
     if (this.reconnect) {
       return;
     }
     this.reconnect = setTimeout(() => {
       this.reconnect = undefined;
-      this.connect();
+      void this.connect().catch(error => this.warn(`WebSocket reconnect failed: ${error.message}`));
     }, 10_000);
   }
 
@@ -210,8 +300,7 @@ export class JuneClient extends EventEmitter {
 
   private async sendCommand(code: number, data: Record<string, unknown>): Promise<string | null> {
     if (this.ws?.readyState !== WebSocket.OPEN) {
-      this.connect();
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await this.connect();
     }
     if (this.ws?.readyState !== WebSocket.OPEN) {
       throw new Error('June messaging socket is not connected.');
@@ -295,4 +384,21 @@ export class JuneClient extends EventEmitter {
     this.log.warn(message);
     this.emit('warning', message);
   }
+}
+
+function parseTokenResponse(value: unknown): { accessToken: string; refreshToken?: string } {
+  if (!value || typeof value !== 'object') {
+    throw new Error('Invalid June token response.');
+  }
+  const token = (value as { token?: unknown }).token;
+  if (!token || typeof token !== 'object') {
+    throw new Error('Invalid June token response.');
+  }
+  const accessToken = (token as { access_token?: unknown }).access_token;
+  const refreshToken = (token as { refresh_token?: unknown }).refresh_token;
+  if (typeof accessToken !== 'string' || accessToken.length === 0 ||
+      (refreshToken !== undefined && typeof refreshToken !== 'string')) {
+    throw new Error('Invalid June token response.');
+  }
+  return { accessToken, refreshToken };
 }

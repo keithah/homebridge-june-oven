@@ -14,6 +14,9 @@ import type {
 } from 'homebridge';
 import type { JuneClient } from '../june-client';
 import type { JunePlatform } from '../platform';
+import { fetchWithTimeout, readResponseBuffer } from '../http';
+
+const MAX_CAMERA_FRAME_BYTES = 10 * 1024 * 1024;
 
 // A 1x1 grey JPEG served when the oven has not pushed a camera frame yet
 // (i.e. no active cook). Base64 of a minimal valid JPEG.
@@ -26,6 +29,7 @@ interface Session {
   socket?: Socket;
   ffmpeg?: ChildProcess;
   pump?: ReturnType<typeof setInterval>;
+  frameFetch?: AbortController;
   targetAddress: string;
   videoPort: number;
   videoSsrc: number;
@@ -83,14 +87,11 @@ export class JuneCameraSource implements CameraStreamingDelegate {
       return;
     }
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5000);
-      const response = await fetch(snapshot.url, { signal: controller.signal });
-      clearTimeout(timer);
+      const response = await fetchWithTimeout(snapshot.url, {}, 5000);
       if (!response.ok) {
         throw new Error(`snapshot fetch ${response.status}`);
       }
-      callback(undefined, Buffer.from(await response.arrayBuffer()));
+      callback(undefined, await readResponseBuffer(response, MAX_CAMERA_FRAME_BYTES));
     } catch (error) {
       this.platform.log.warn(`June camera snapshot failed: ${(error as Error).message}`);
       callback(undefined, PLACEHOLDER_JPEG);
@@ -99,8 +100,22 @@ export class JuneCameraSource implements CameraStreamingDelegate {
 
   public prepareStream(request: PrepareStreamRequest, callback: PrepareStreamCallback): void {
     const socket = createSocket(request.addressVersion === 'ipv6' ? 'udp6' : 'udp4');
-    socket.on('error', error => this.platform.log.warn(`June camera RTCP socket error: ${error.message}`));
+    let prepared = false;
+    socket.once('error', error => {
+      this.platform.log.warn(`June camera RTCP socket error: ${error.message}`);
+      if (!prepared) {
+        prepared = true;
+        try { socket.close(); } catch { /* already closed */ }
+        callback(error);
+      } else {
+        this.stopSession(request.sessionID);
+      }
+    });
     socket.bind(() => {
+      if (prepared) {
+        return;
+      }
+      prepared = true;
       const localPort = socket.address().port;
       const ssrc = this.platform.api.hap.CameraController.generateSynchronisationSource();
       this.sessions.set(request.sessionID, {
@@ -142,6 +157,7 @@ export class JuneCameraSource implements CameraStreamingDelegate {
     }
     if (!this.client.latestSnapshot) {
       this.platform.log.warn('June camera has no frame yet (no active cook) — cannot start live stream.');
+      this.stopSession(request.sessionID);
       callback(new Error('No camera frame available'));
       return;
     }
@@ -171,19 +187,26 @@ export class JuneCameraSource implements CameraStreamingDelegate {
       proc = spawn(ffmpegPath, args, { env: process.env });
     } catch (error) {
       this.platform.log.error(`June camera: failed to spawn ffmpeg ("${ffmpegPath}"): ${(error as Error).message}`);
+      this.stopSession(request.sessionID);
       callback(new Error('ffmpeg not available'));
       return;
     }
     session.ffmpeg = proc;
-    proc.on('error', error =>
-      this.platform.log.error(`June camera ffmpeg error: ${error.message} (is ffmpeg installed at "${ffmpegPath}"?)`),
-    );
+    let started = false;
+    proc.once('error', error => {
+      this.platform.log.error(`June camera ffmpeg error: ${error.message} (is ffmpeg installed at "${ffmpegPath}"?)`);
+      this.stopSession(request.sessionID);
+      if (!started) {
+        callback(new Error('ffmpeg not available'));
+      }
+    });
     proc.stdin?.on('error', () => { /* ignore EPIPE once ffmpeg exits */ });
     proc.stderr?.on('data', data => this.platform.log.debug(`[june-camera ffmpeg] ${data}`));
     proc.on('exit', (code, signal) => {
       if (code !== null && code !== 0 && signal !== 'SIGKILL') {
         this.platform.log.warn(`June camera ffmpeg exited with code ${code}`);
       }
+      this.stopSession(request.sessionID);
     });
 
     // Pump the oven's latest still into ffmpeg at ~fps, refetching only when the
@@ -199,9 +222,11 @@ export class JuneCameraSource implements CameraStreamingDelegate {
         fetching = true;
         lastUrl = snap.url;
         try {
-          const response = await fetch(snap.url);
+          session.frameFetch?.abort();
+          session.frameFetch = new AbortController();
+          const response = await fetchWithTimeout(snap.url, { signal: session.frameFetch.signal }, 5000);
           if (response.ok) {
-            lastFrame = Buffer.from(await response.arrayBuffer());
+            lastFrame = await readResponseBuffer(response, MAX_CAMERA_FRAME_BYTES);
           }
         } catch {
           // keep the previous frame on a transient fetch failure
@@ -213,10 +238,12 @@ export class JuneCameraSource implements CameraStreamingDelegate {
         proc.stdin.write(lastFrame);
       }
     };
-    session.pump = setInterval(() => { void pump(); }, Math.round(1000 / fps));
-    void pump();
-
-    callback();
+    proc.once('spawn', () => {
+      started = true;
+      session.pump = setInterval(() => { void pump(); }, Math.round(1000 / fps));
+      void pump();
+      callback();
+    });
   }
 
   private stopSession(sessionID: string): void {
@@ -227,6 +254,7 @@ export class JuneCameraSource implements CameraStreamingDelegate {
     if (session.pump) {
       clearInterval(session.pump);
     }
+    session.frameFetch?.abort();
     if (session.ffmpeg?.stdin && !session.ffmpeg.stdin.destroyed) {
       try {
         session.ffmpeg.stdin.end();

@@ -8,6 +8,7 @@ class JuneUiServer extends HomebridgePluginUiServer {
     this.pairing = new PairingManager();
     this.onRequest('/pair/begin', this.beginPairing.bind(this));
     this.onRequest('/pair/status', this.pairingStatus.bind(this));
+    this.onRequest('/pair/cancel', this.cancelPairing.bind(this));
     this.onRequest('/oven/status', this.ovenStatus.bind(this));
     this.ready();
   }
@@ -25,6 +26,14 @@ class JuneUiServer extends HomebridgePluginUiServer {
       throw new RequestError('Missing pairing session id.', { status: 400 });
     }
     return this.pairing.status(payload.id);
+  }
+
+  async cancelPairing(payload) {
+    if (!payload || !payload.id) {
+      throw new RequestError('Missing pairing session id.', { status: 400 });
+    }
+    this.pairing.cancel(payload.id);
+    return { cancelled: true };
   }
 
   async ovenStatus(payload) {

@@ -18,6 +18,12 @@ export class JuneModeSwitchAccessory {
     private readonly client: JuneClient,
   ) {
     const { Service, Characteristic } = this.platform;
+    const configuredSubtypes = new Set(this.client.config.modes.map(mode => `mode-${mode.primitiveType}`));
+    for (const service of this.accessory.services) {
+      if (service.subtype?.startsWith('mode-') && !configuredSubtypes.has(service.subtype)) {
+        this.accessory.removeService(service);
+      }
+    }
     for (const mode of this.client.config.modes) {
       const subtype = `mode-${mode.primitiveType}`;
       const service = this.accessory.getServiceById(Service.Switch, subtype)

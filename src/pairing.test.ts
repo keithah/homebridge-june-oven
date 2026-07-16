@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest';
-import { buildShownCode, damm, modPow, SrpServer } from './pairing';
+import { EventEmitter } from 'events';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { buildShownCode, damm, modPow, PairingManager, SrpServer } from './pairing';
+
+afterEach(() => vi.useRealTimers());
 
 describe('Damm PIN construction', () => {
   it('appends a check digit that validates to zero', () => {
@@ -22,3 +25,50 @@ describe('SRP server', () => {
     expect(secret.length).toBeGreaterThan(0);
   });
 });
+
+describe('PairingManager lifecycle', () => {
+  it('destroys a session whose startup fails', async () => {
+    const session = fakeSession({ id: 'session', state: 'starting' });
+    session.begin.mockRejectedValueOnce(new Error('pairing failed'));
+    const manager = new PairingManager({ sessionFactory: () => session as never });
+
+    await expect(manager.begin()).rejects.toThrow('pairing failed');
+
+    expect(session.destroy).toHaveBeenCalledOnce();
+  });
+
+  it('evicts and destroys terminal sessions after the configured lifetime', async () => {
+    vi.useFakeTimers();
+    const session = fakeSession({ id: 'session', state: 'paired' });
+    const manager = new PairingManager({
+      sessionFactory: id => {
+        session.status.id = id;
+        return session as never;
+      },
+      terminalTtlMs: 100,
+    });
+    const status = await manager.begin();
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(manager.status(status.id)).toMatchObject({ state: 'failed', error: 'Pairing session not found.' });
+    expect(session.destroy).toHaveBeenCalledOnce();
+  });
+
+  it('limits simultaneous active pairing sessions', async () => {
+    const session = fakeSession({ id: 'session', state: 'waiting-for-oven' });
+    const manager = new PairingManager({ sessionFactory: () => session as never, maxActiveSessions: 1 });
+    await manager.begin();
+
+    await expect(manager.begin()).rejects.toThrow(/already active/i);
+  });
+});
+
+function fakeSession(status: { id: string; state: 'starting' | 'waiting-for-oven' | 'paired' }) {
+  const emitter = new EventEmitter() as EventEmitter & Record<string, any>;
+  emitter.begin = vi.fn(async () => status);
+  emitter.currentStatus = vi.fn(() => status);
+  emitter.destroy = vi.fn();
+  emitter.status = status;
+  return emitter;
+}
