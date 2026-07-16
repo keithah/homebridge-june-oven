@@ -55,8 +55,5 @@
     "homebridge": "^1.8.4",
     "typescript": "^5.5.3",
     "vitest": "^4.1.10"
-  },
-  "peerDependencies": {
-    "homebridge": ">=1.8.0"
   }
 }

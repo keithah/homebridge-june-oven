@@ -184,7 +184,7 @@ export class JuneCameraSource implements CameraStreamingDelegate {
     const ffmpegPath = this.client.config.camera.ffmpegPath;
     let proc: ChildProcess;
     try {
-      proc = spawn(ffmpegPath, args, { env: process.env });
+      proc = spawn(ffmpegPath, args);
     } catch (error) {
       this.platform.log.error(`June camera: failed to spawn ffmpeg ("${ffmpegPath}"): ${(error as Error).message}`);
       this.stopSession(request.sessionID);
