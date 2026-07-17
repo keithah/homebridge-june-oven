@@ -349,7 +349,10 @@
       const modeIndex = Number(row.dataset.modeIndex);
       row.querySelector('.field-mode-label').addEventListener('change', event => updateMode(index, modeIndex, 'label', event.target.value));
       row.querySelector('.field-mode-type').addEventListener('change', event => updateMode(index, modeIndex, 'primitiveType', event.target.value));
-      row.querySelector('.field-mode-temp').addEventListener('change', event => updateMode(index, modeIndex, 'tempF', Number(event.target.value) || 350));
+      row.querySelector('.field-mode-temp').addEventListener('change', event => {
+        const tempF = Number(event.target.value);
+        updateMode(index, modeIndex, 'tempF', Number.isFinite(tempF) ? tempF : 350);
+      });
       row.querySelector('.remove-mode').addEventListener('click', () => removeMode(index, modeIndex));
     });
     card.querySelector('.add-mode').addEventListener('click', () => addMode(index));

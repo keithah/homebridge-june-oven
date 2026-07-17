@@ -35,6 +35,10 @@ export class JuneProbeSensorAccessory {
   private update(telemetry: JuneTelemetry): void {
     if (typeof telemetry.probeC === 'number') {
       this.service.updateCharacteristic(this.platform.Characteristic.CurrentTemperature, telemetry.probeC);
+    } else if (telemetry.probePresent === false) {
+      // The probe was unplugged: drop the last (possibly hot) reading to 0 °C so
+      // automations don't stay latched on a value the oven is no longer reporting.
+      this.service.updateCharacteristic(this.platform.Characteristic.CurrentTemperature, 0);
     }
   }
 }

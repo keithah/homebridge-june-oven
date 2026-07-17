@@ -94,6 +94,29 @@ describe('JuneModeSwitchAccessory', () => {
     expect(service.updateCharacteristic).not.toHaveBeenCalledWith('On', false);
   });
 
+  it('keeps a just-started mode on until the oven reports active', async () => {
+    const service = new FakeService();
+    const client = new FakeClient({ modes: [{ label: 'Bake', primitiveType: 'bake', tempF: 350 }] });
+    client.startMode.mockResolvedValue('success');
+    const accessory = {
+      services: [],
+      getServiceById: vi.fn(() => service),
+      addService: vi.fn(() => service),
+      removeService: vi.fn(),
+    };
+    new JuneModeSwitchAccessory(fakePlatform() as never, accessory as never, client as never);
+
+    await service.characteristic.setHandler?.(true);
+    // Oven is preheating (not yet active): the switch must stay on.
+    client.emit('telemetry', { active: false });
+    expect(service.updateCharacteristic).not.toHaveBeenCalledWith('On', false);
+
+    // Cook actually ends after going active: now the switch turns off.
+    client.emit('telemetry', { active: true });
+    client.emit('telemetry', { active: false });
+    expect(service.updateCharacteristic).toHaveBeenCalledWith('On', false);
+  });
+
   it('keeps telemetry guarded until queued mode commands have both settled', async () => {
     const bake = new FakeService();
     const roast = new FakeService();
@@ -144,5 +167,23 @@ describe('JuneProbeSensorAccessory', () => {
     new JuneProbeSensorAccessory(fakePlatform() as never, accessory as never, client as never);
 
     expect(service.characteristic.setProps).toHaveBeenCalledWith({ minValue: -20, maxValue: 300 });
+  });
+
+  it('clears the latched reading when the probe is unplugged', () => {
+    const service = new FakeService();
+    const client = new FakeClient({ probeSensors: { name: 'Food Probe' } });
+    const accessory = {
+      getServiceById: vi.fn(() => undefined),
+      removeService: vi.fn(),
+      getService: vi.fn(() => service),
+      addService: vi.fn(() => service),
+    };
+    new JuneProbeSensorAccessory(fakePlatform() as never, accessory as never, client as never);
+
+    client.emit('telemetry', { probeC: 70, probePresent: true });
+    expect(service.updateCharacteristic).toHaveBeenCalledWith('CurrentTemperature', 70);
+
+    client.emit('telemetry', { probePresent: false });
+    expect(service.updateCharacteristic).toHaveBeenCalledWith('CurrentTemperature', 0);
   });
 });

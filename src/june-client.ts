@@ -34,6 +34,11 @@ export interface JuneSnapshot {
   contentType: string;
 }
 
+// A 10011 frame's pre-signed URL is valid ~300 s. Treat a cached snapshot as
+// gone once it is close to expiry so idle live-view taps fail fast (with the
+// placeholder) instead of spawning ffmpeg against a URL that now 403s.
+const SNAPSHOT_TTL_MS = 240_000;
+
 const CAMERA_HOSTS = new Set(['api.junelife.com', 'june-api.s3.amazonaws.com']);
 
 function isTrustedCameraUrl(candidate: unknown): candidate is string {
@@ -102,8 +107,12 @@ export class JuneClient extends EventEmitter {
   private lastCancelled = false;
   private lastTargetTempC?: number;
   private snapshot?: JuneSnapshot;
+  private snapshotAt = 0;
 
   public get latestSnapshot(): JuneSnapshot | undefined {
+    if (this.snapshot && Date.now() - this.snapshotAt > SNAPSHOT_TTL_MS) {
+      return undefined;
+    }
     return this.snapshot;
   }
 
@@ -116,6 +125,11 @@ export class JuneClient extends EventEmitter {
     this.stopped = false;
     await this.refreshToken();
     await this.fetchStatus().catch(error => this.warn(`Initial status failed: ${error.message}`));
+    if (this.stopped) {
+      // stop() ran while we were awaiting startup; don't install the poll it
+      // already tried to clear.
+      return;
+    }
     void this.connect().catch(error => this.warn(`WebSocket connection failed: ${error.message}`));
     this.statusPoll = setInterval(() => {
       this.fetchStatus().catch(error => this.warn(`Status poll failed: ${error.message}`));
@@ -359,6 +373,7 @@ export class JuneClient extends EventEmitter {
       const snapshot = parseCameraFrame(data);
       if (snapshot) {
         this.snapshot = snapshot;
+        this.snapshotAt = Date.now();
       }
       return;
     }
@@ -409,9 +424,11 @@ function parseTokenResponse(value: unknown): { accessToken: string; refreshToken
   }
   const accessToken = (token as { access_token?: unknown }).access_token;
   const refreshToken = (token as { refresh_token?: unknown }).refresh_token;
-  if (typeof accessToken !== 'string' || accessToken.length === 0 ||
-      (refreshToken !== undefined && typeof refreshToken !== 'string')) {
+  if (typeof accessToken !== 'string' || accessToken.length === 0) {
     throw new Error('Invalid June token response.');
   }
-  return { accessToken, refreshToken };
+  // A missing/null/non-string refresh_token is tolerated: the caller keeps the
+  // existing refresh token rather than aborting a refresh that returned a valid
+  // access token.
+  return { accessToken, refreshToken: typeof refreshToken === 'string' ? refreshToken : undefined };
 }

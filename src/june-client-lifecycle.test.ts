@@ -103,6 +103,14 @@ describe('JuneClient lifecycle', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('tolerates a null refresh_token when the access token is valid', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({ token: { access_token: 'access', refresh_token: null } }))));
+    const june = client();
+
+    await expect(june.refreshToken()).resolves.toBeUndefined();
+  });
+
   it('rejects a malformed successful status response', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(['not', 'a', 'status']))));
 

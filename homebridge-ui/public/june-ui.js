@@ -14,6 +14,6 @@ export function loadJuneConfig(homebridge) {
 }
 
 export async function saveJuneConfig(homebridge, config) {
-  await homebridge.updatePluginConfig(config);
-  await homebridge.savePluginConfig();
+  await withTimeout(homebridge.updatePluginConfig(config));
+  await withTimeout(homebridge.savePluginConfig());
 }

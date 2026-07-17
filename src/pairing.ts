@@ -344,7 +344,9 @@ export class JunePairingSession extends EventEmitter {
       }
       const body = bodyValue as { devices?: Array<{ oven_id?: string; name?: string; device_name?: string }> };
       if (body.devices !== undefined && !Array.isArray(body.devices)) {
-        throw new Error('Invalid June association response.');
+        // Transient body (e.g. { devices: null }) before the oven finishes
+        // associating: keep polling instead of failing the whole session.
+        continue;
       }
       const oven = body.devices?.find(device => device.oven_id);
       if (!oven?.oven_id) {
@@ -399,10 +401,20 @@ export class PairingManager {
   }
 
   public async begin(deviceName?: string): Promise<PairingStatus> {
-    const active = [...this.sessions.values()].filter(session =>
-      !isTerminal(session.currentStatus().state)).length;
-    if (active >= this.maxActiveSessions) {
-      throw new Error('A June pairing session is already active.');
+    // A new begin() supersedes any lingering active session (oldest first) so a
+    // user who lost the previous pairing id — e.g. reloaded the config UI, or
+    // the first attempt stalled — can always retry, while still capping the
+    // number of concurrent sessions.
+    const activeIds = [...this.sessions.entries()]
+      .filter(([, session]) => !isTerminal(session.currentStatus().state))
+      .map(([id]) => id);
+    while (activeIds.length >= this.maxActiveSessions) {
+      const oldest = activeIds.shift();
+      const session = oldest !== undefined ? this.sessions.get(oldest) : undefined;
+      if (oldest === undefined || !session) {
+        break;
+      }
+      this.remove(oldest, session);
     }
     const id = randomBytes(8).toString('hex');
     const session = this.sessionFactory(id, deviceName);
@@ -473,11 +485,12 @@ function parsePairingToken(value: unknown): { accessToken: string; refreshToken?
   }
   const accessToken = (token as { access_token?: unknown }).access_token;
   const refreshToken = (token as { refresh_token?: unknown }).refresh_token;
-  if (typeof accessToken !== 'string' || accessToken.length === 0 ||
-      (refreshToken !== undefined && typeof refreshToken !== 'string')) {
+  if (typeof accessToken !== 'string' || accessToken.length === 0) {
     throw new Error('Invalid June registration response.');
   }
-  return { accessToken, refreshToken };
+  // Tolerate a missing/null/non-string refresh_token rather than rejecting an
+  // otherwise-valid registration.
+  return { accessToken, refreshToken: typeof refreshToken === 'string' ? refreshToken : undefined };
 }
 
 function findLongBase64(input: string): string | undefined {

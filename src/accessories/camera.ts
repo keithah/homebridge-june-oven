@@ -2,6 +2,7 @@ import { createSocket, Socket } from 'dgram';
 import { spawn, ChildProcess } from 'child_process';
 import type {
   CameraController,
+  CameraControllerOptions,
   CameraStreamingDelegate,
   PlatformAccessory,
   PrepareStreamCallback,
@@ -54,9 +55,10 @@ export class JuneCameraSource implements CameraStreamingDelegate {
   constructor(
     private readonly platform: JunePlatform,
     private readonly client: JuneClient,
+    private readonly asDoorbell = false,
   ) {
     const hap = this.platform.api.hap;
-    this.controller = new hap.CameraController({
+    const options: CameraControllerOptions = {
       cameraStreamCount: 2,
       delegate: this,
       streamingOptions: {
@@ -77,8 +79,18 @@ export class JuneCameraSource implements CameraStreamingDelegate {
         // omitting it crashes the stream ("Audio was enabled but not supplied"). audio is
         // optional in CameraStreamingOptions, so we leave it out.
       },
-    });
+    };
+    // A video doorbell needs a DoorbellController (which owns the Doorbell
+    // service and rings via ringDoorbell()); a plain camera uses CameraController.
+    // DoorbellController extends CameraController, so the delegate wiring is identical.
+    this.controller = this.asDoorbell ? new hap.DoorbellController(options) : new hap.CameraController(options);
     this.platform.api.on('shutdown', () => this.stopAllSessions());
+  }
+
+  public ringDoorbell(): void {
+    if (this.asDoorbell) {
+      (this.controller as unknown as { ringDoorbell(): void }).ringDoorbell();
+    }
   }
 
   public async handleSnapshotRequest(_request: SnapshotRequest, callback: SnapshotRequestCallback): Promise<void> {
@@ -229,6 +241,9 @@ export class JuneCameraSource implements CameraStreamingDelegate {
     proc.once('error', error => {
       this.platform.log.error(`June camera ffmpeg error: ${error.message} (is ffmpeg installed at "${ffmpegPath}"?)`);
       session.ffmpeg = undefined;
+      if (!this.sessions.has(request.sessionID)) {
+        return; // session already torn down
+      }
       if (started) {
         this.failSession(request.sessionID);
       } else {
@@ -243,6 +258,11 @@ export class JuneCameraSource implements CameraStreamingDelegate {
         this.platform.log.warn(`June camera ffmpeg exited with code ${code}`);
       }
       session.ffmpeg = undefined;
+      if (!this.sessions.has(request.sessionID)) {
+        // A clean STOP already SIGKILLed ffmpeg and removed the session; don't
+        // force-stop a session HomeKit has already torn down.
+        return;
+      }
       if (started) {
         this.failSession(request.sessionID);
       } else {
@@ -281,6 +301,12 @@ export class JuneCameraSource implements CameraStreamingDelegate {
       }
     };
     proc.once('spawn', () => {
+      if (!this.sessions.has(request.sessionID)) {
+        // Session was stopped/failed before ffmpeg finished spawning; kill the
+        // orphaned process instead of leaking a pump interval against it.
+        proc.kill('SIGKILL');
+        return;
+      }
       started = true;
       session.pump = setInterval(() => { void pump(); }, Math.round(1000 / fps));
       void pump();
@@ -325,7 +351,13 @@ export class JuneCameraSource implements CameraStreamingDelegate {
   }
 }
 
-export function attachCamera(platform: JunePlatform, accessory: PlatformAccessory, client: JuneClient): void {
-  const source = new JuneCameraSource(platform, client);
+export function attachCamera(
+  platform: JunePlatform,
+  accessory: PlatformAccessory,
+  client: JuneClient,
+  asDoorbell = false,
+): JuneCameraSource {
+  const source = new JuneCameraSource(platform, client, asDoorbell);
   accessory.configureController(source.controller);
+  return source;
 }

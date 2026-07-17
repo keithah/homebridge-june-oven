@@ -55,12 +55,19 @@ describe('PairingManager lifecycle', () => {
     expect(session.destroy).toHaveBeenCalledOnce();
   });
 
-  it('limits simultaneous active pairing sessions', async () => {
-    const session = fakeSession({ id: 'session', state: 'waiting-for-oven' });
-    const manager = new PairingManager({ sessionFactory: () => session as never, maxActiveSessions: 1 });
+  it('supersedes a lingering active session so pairing can be retried', async () => {
+    const first = fakeSession({ id: 'first', state: 'waiting-for-oven' });
+    const second = fakeSession({ id: 'second', state: 'waiting-for-oven' });
+    const created = [first, second];
+    const manager = new PairingManager({
+      sessionFactory: () => created.shift() as never,
+      maxActiveSessions: 1,
+    });
     await manager.begin();
 
-    await expect(manager.begin()).rejects.toThrow(/already active/i);
+    await expect(manager.begin()).resolves.toMatchObject({ state: 'waiting-for-oven' });
+    expect(first.destroy).toHaveBeenCalledOnce();
+    expect(second.destroy).not.toHaveBeenCalled();
   });
 });
 
