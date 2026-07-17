@@ -78,6 +78,7 @@ export class JuneCameraSource implements CameraStreamingDelegate {
         // optional in CameraStreamingOptions, so we leave it out.
       },
     });
+    this.platform.api.on('shutdown', () => this.stopAllSessions());
   }
 
   public async handleSnapshotRequest(_request: SnapshotRequest, callback: SnapshotRequestCallback): Promise<void> {
@@ -87,7 +88,7 @@ export class JuneCameraSource implements CameraStreamingDelegate {
       return;
     }
     try {
-      const response = await fetchWithTimeout(snapshot.url, {}, 5000);
+      const response = await fetchWithTimeout(snapshot.url, { redirect: 'error' }, 5000);
       if (!response.ok) {
         throw new Error(`snapshot fetch ${response.status}`);
       }
@@ -99,40 +100,64 @@ export class JuneCameraSource implements CameraStreamingDelegate {
   }
 
   public prepareStream(request: PrepareStreamRequest, callback: PrepareStreamCallback): void {
-    const socket = createSocket(request.addressVersion === 'ipv6' ? 'udp6' : 'udp4');
-    let prepared = false;
-    socket.once('error', error => {
+    let socket: Socket;
+    try {
+      socket = createSocket(request.addressVersion === 'ipv6' ? 'udp6' : 'udp4');
+    } catch (error) {
+      callback(error as Error);
+      return;
+    }
+    let settled = false;
+    const finish = (error?: Error, response?: Parameters<PrepareStreamCallback>[1]) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      callback(error, response);
+    };
+    socket.on('error', error => {
       this.platform.log.warn(`June camera RTCP socket error: ${error.message}`);
-      if (!prepared) {
-        prepared = true;
-        try { socket.close(); } catch { /* already closed */ }
-        callback(error);
+      if (!settled) {
+        try {
+          socket.close();
+        } catch {
+          // socket may not have finished binding
+        }
+        finish(new Error(`RTCP socket error: ${error.message}`));
       } else {
-        this.stopSession(request.sessionID);
+        this.failSession(request.sessionID);
       }
     });
     socket.bind(() => {
-      if (prepared) {
+      if (settled) {
         return;
       }
-      prepared = true;
-      const localPort = socket.address().port;
-      const ssrc = this.platform.api.hap.CameraController.generateSynchronisationSource();
-      this.sessions.set(request.sessionID, {
-        socket,
-        targetAddress: request.targetAddress,
-        videoPort: request.video.port,
-        videoSsrc: ssrc,
-        videoSrtp: Buffer.concat([request.video.srtp_key, request.video.srtp_salt]).toString('base64'),
-      });
-      callback(undefined, {
-        video: {
-          port: localPort,
-          ssrc,
-          srtp_key: request.video.srtp_key,
-          srtp_salt: request.video.srtp_salt,
-        },
-      });
+      try {
+        const localPort = socket.address().port;
+        const ssrc = this.platform.api.hap.CameraController.generateSynchronisationSource();
+        this.sessions.set(request.sessionID, {
+          socket,
+          targetAddress: request.targetAddress,
+          videoPort: request.video.port,
+          videoSsrc: ssrc,
+          videoSrtp: Buffer.concat([request.video.srtp_key, request.video.srtp_salt]).toString('base64'),
+        });
+        finish(undefined, {
+          video: {
+            port: localPort,
+            ssrc,
+            srtp_key: request.video.srtp_key,
+            srtp_salt: request.video.srtp_salt,
+          },
+        });
+      } catch (error) {
+        try {
+          socket.close();
+        } catch {
+          // socket may already be closed
+        }
+        finish(error as Error);
+      }
     });
   }
 
@@ -193,11 +218,22 @@ export class JuneCameraSource implements CameraStreamingDelegate {
     }
     session.ffmpeg = proc;
     let started = false;
+    let startSettled = false;
+    const finishStart = (error?: Error) => {
+      if (startSettled) {
+        return;
+      }
+      startSettled = true;
+      callback(error);
+    };
     proc.once('error', error => {
       this.platform.log.error(`June camera ffmpeg error: ${error.message} (is ffmpeg installed at "${ffmpegPath}"?)`);
-      this.stopSession(request.sessionID);
-      if (!started) {
-        callback(new Error('ffmpeg not available'));
+      session.ffmpeg = undefined;
+      if (started) {
+        this.failSession(request.sessionID);
+      } else {
+        this.stopSession(request.sessionID);
+        finishStart(new Error('ffmpeg not available'));
       }
     });
     proc.stdin?.on('error', () => { /* ignore EPIPE once ffmpeg exits */ });
@@ -206,7 +242,13 @@ export class JuneCameraSource implements CameraStreamingDelegate {
       if (code !== null && code !== 0 && signal !== 'SIGKILL') {
         this.platform.log.warn(`June camera ffmpeg exited with code ${code}`);
       }
-      this.stopSession(request.sessionID);
+      session.ffmpeg = undefined;
+      if (started) {
+        this.failSession(request.sessionID);
+      } else {
+        this.stopSession(request.sessionID);
+        finishStart(new Error('ffmpeg exited before streaming started'));
+      }
     });
 
     // Pump the oven's latest still into ffmpeg at ~fps, refetching only when the
@@ -224,7 +266,7 @@ export class JuneCameraSource implements CameraStreamingDelegate {
         try {
           session.frameFetch?.abort();
           session.frameFetch = new AbortController();
-          const response = await fetchWithTimeout(snap.url, { signal: session.frameFetch.signal }, 5000);
+          const response = await fetchWithTimeout(snap.url, { signal: session.frameFetch.signal, redirect: 'error' }, 5000);
           if (response.ok) {
             lastFrame = await readResponseBuffer(response, MAX_CAMERA_FRAME_BYTES);
           }
@@ -242,7 +284,7 @@ export class JuneCameraSource implements CameraStreamingDelegate {
       started = true;
       session.pump = setInterval(() => { void pump(); }, Math.round(1000 / fps));
       void pump();
-      callback();
+      finishStart();
     });
   }
 
@@ -269,6 +311,17 @@ export class JuneCameraSource implements CameraStreamingDelegate {
       // socket may already be closed
     }
     this.sessions.delete(sessionID);
+  }
+
+  private failSession(sessionID: string): void {
+    this.controller.forceStopStreamingSession(sessionID);
+    this.stopSession(sessionID);
+  }
+
+  private stopAllSessions(): void {
+    for (const sessionID of [...this.sessions.keys()]) {
+      this.stopSession(sessionID);
+    }
   }
 }
 

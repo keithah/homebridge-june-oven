@@ -28,6 +28,7 @@ export class JuneProbeSensorAccessory {
     }
     this.service = this.accessory.getService(Service.TemperatureSensor) || this.accessory.addService(Service.TemperatureSensor);
     this.service.setCharacteristic(Characteristic.Name, cfg.name);
+    this.service.getCharacteristic(Characteristic.CurrentTemperature).setProps({ minValue: -20, maxValue: 300 });
     this.client.on('telemetry', telemetry => this.update(telemetry));
   }
 

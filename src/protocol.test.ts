@@ -54,8 +54,8 @@ describe('normalizeOvenConfig new options', () => {
     const n = normalizeOvenConfig({
       ...base,
       modes: [
-        { primitiveType: 'toast' } as never,
-        { label: '', primitiveType: '' } as never,
+        { primitiveType: 'toast' },
+        { label: '', primitiveType: '' },
       ],
     });
     expect(n.modes).toEqual([{ label: 'toast', primitiveType: 'toast', tempF: 350 }]);

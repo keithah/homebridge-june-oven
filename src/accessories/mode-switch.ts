@@ -11,6 +11,9 @@ import type { JuneModeConfig } from '../protocol';
  */
 export class JuneModeSwitchAccessory {
   private readonly services = new Map<string, { service: Service; mode: JuneModeConfig }>();
+  private commandInFlight = false;
+  private queuedCommands = 0;
+  private commandTail: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly platform: JunePlatform,
@@ -36,7 +39,7 @@ export class JuneModeSwitchAccessory {
   }
 
   private update(telemetry: JuneTelemetry): void {
-    if (telemetry.active === false) {
+    if (!this.commandInFlight && telemetry.active === false) {
       this.setAllOff();
     }
   }
@@ -49,7 +52,18 @@ export class JuneModeSwitchAccessory {
     }
   }
 
-  private async setOn(subtype: string, value: CharacteristicValue): Promise<void> {
+  private setOn(subtype: string, value: CharacteristicValue): Promise<void> {
+    this.queuedCommands++;
+    this.commandInFlight = true;
+    const operation = this.commandTail.then(() => this.runCommand(subtype, value));
+    this.commandTail = operation.catch(() => undefined);
+    return operation.finally(() => {
+      this.queuedCommands--;
+      this.commandInFlight = this.queuedCommands > 0;
+    });
+  }
+
+  private async runCommand(subtype: string, value: CharacteristicValue): Promise<void> {
     const entry = this.services.get(subtype);
     if (!entry) {
       return;

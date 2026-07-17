@@ -34,11 +34,24 @@ export interface JuneSnapshot {
   contentType: string;
 }
 
+const CAMERA_HOSTS = new Set(['api.junelife.com', 'june-api.s3.amazonaws.com']);
+
+function isTrustedCameraUrl(candidate: unknown): candidate is string {
+  if (typeof candidate !== 'string') {
+    return false;
+  }
+  try {
+    const url = new URL(candidate);
+    return url.protocol === 'https:' && CAMERA_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 // A 10011 camera frame carries a pre-signed still-JPEG URL (image_url = CDN,
 // signed_url = direct S3), valid ~300 s, pushed ~1/s during a cook.
 export function parseCameraFrame(data: any): JuneSnapshot | null {
-  const url = typeof data?.image_url === 'string' ? data.image_url
-    : typeof data?.signed_url === 'string' ? data.signed_url : undefined;
+  const url = [data?.image_url, data?.signed_url].find(isTrustedCameraUrl);
   if (!url) {
     return null;
   }

@@ -18,6 +18,12 @@ export interface JuneModeConfig {
   tempF: number;
 }
 
+export interface JuneModeInput {
+  primitiveType: string;
+  label?: string;
+  tempF?: number;
+}
+
 export interface JuneDoorbellConfig {
   enabled: boolean;
   name: string;
@@ -44,7 +50,7 @@ export interface JuneOvenConfig {
   defaultTempF?: number;
   tempUnit?: 'F' | 'C';
   doorbell?: Partial<Omit<JuneDoorbellConfig, 'triggers'>> & { triggers?: Partial<JuneDoorbellConfig['triggers']> };
-  modes?: JuneModeConfig[];
+  modes?: JuneModeInput[];
   probeSensors?: Partial<JuneProbeSensorsConfig>;
   camera?: Partial<JuneCameraConfig>;
   ovenId: string;

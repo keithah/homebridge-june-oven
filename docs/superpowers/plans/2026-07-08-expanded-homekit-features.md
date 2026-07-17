@@ -1,5 +1,7 @@
 # Expanded HomeKit Features Implementation Plan
 
+> **Historical plan:** This records the initial implementation sequence, including protocol assumptions that were later replaced by live captures. The shipped contract is documented in the expanded-features design and README. Camera and ffmpeg streaming were added after the original scoped tasks once Spike A confirmed the `10011` still-image feed.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add opt-in cook-done doorbell, food-probe temperature sensors, and config-driven cook-mode switches to `homebridge-june-oven`, and document why timer/progress are intentionally omitted.
@@ -13,7 +15,7 @@
 - Node floors: `18.20.4+`, `20.19.0+`, `22.12.0+`, or `24+`. Homebridge `>=1.8.0`.
 - Every new feature is **opt-in**, default off (doorbell) or empty (modes, probes). Upgrading an existing install must change no behavior.
 - Temperature on the wire is milli-°C; convert with existing helpers (`fahrenheitToMilliC`, `milliCToCelsius`). HomeKit temperature characteristics are Celsius.
-- No new runtime dependencies. Camera/streaming/ffmpeg are OUT of scope for this plan (deferred to Spike A — see spec).
+- No new npm runtime dependencies. Camera/streaming/ffmpeg were deferred from the original task sequence to Spike A, then delivered in the same feature branch after the camera feed was confirmed.
 - Test runner: `npm test` (vitest run). Type-check: `npm run lint` (`tsc --noEmit`).
 - Commit after each task with a `feat:`/`docs:` message.
 
