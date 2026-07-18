@@ -56,6 +56,7 @@ describe('normalizeOvenConfig new options', () => {
       modes: [
         { primitiveType: 'toast' },
         { label: '', primitiveType: '' },
+        { label: 'Broken' } as never,
       ],
     });
     expect(n.modes).toEqual([{ label: 'toast', primitiveType: 'toast', tempF: 350 }]);

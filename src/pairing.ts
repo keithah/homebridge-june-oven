@@ -176,6 +176,9 @@ export class JunePairingSession extends EventEmitter {
     try {
       await sodium.ready;
       this.registration = await this.registerDevice();
+      if (!this.registration) {
+        throw new Error('Pairing session was destroyed during device registration.');
+      }
       const signingKey = sodium.crypto_sign_keypair();
       const boxKey = sodium.crypto_box_keypair();
       this.signingSeedHex = Buffer.from(signingKey.privateKey.slice(0, 32)).toString('hex');
@@ -183,6 +186,9 @@ export class JunePairingSession extends EventEmitter {
       this.encryptionPublic = boxKey.publicKey;
       this.openSocket(this.registration.accessToken);
       const pin = await this.requestPairingCode(this.registration.accessToken);
+      if (!this.registration) {
+        throw new Error('Pairing session was destroyed during pairing code request.');
+      }
       this.serverCode = pin.code;
       this.status.shownCode = buildShownCode(pin.code);
       this.srp = new SrpServer(this.status.shownCode);

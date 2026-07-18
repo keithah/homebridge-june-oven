@@ -89,10 +89,9 @@ the existing ready/done occupancy sensors; users can enable either, both, or nei
 - Config (per oven): `doorbell` object — `enabled` (bool, default false), `triggers` (object with
   `done`/`ready` booleans, all default false), `name`.
 
-**Video Doorbell integration is shipped.** When both options are enabled, the Camera service is
-attached to this same accessory, turning it into a Video Doorbell whose notification carries the
-JPEG food photo without restructuring or re-pairing. Enabling the camera promotes the plain
-doorbell to video; the doorbell remains usable without it.
+**Video Doorbell integration is shipped.** When both options are enabled, the Camera is published
+as a separate external accessory, requiring users to add it in the Home app with the Homebridge
+PIN. The doorbell operates standalone whether the camera is enabled or not.
 
 ## Feature 2 — Interior camera (snapshot + still-based live view)
 

@@ -1,7 +1,7 @@
 # Expanded HomeKit Features Implementation Plan
 
 > **Historical plan:** This records the initial implementation sequence, including protocol assumptions that were later replaced by live captures. The shipped contract is documented in the expanded-features design and README. Camera and ffmpeg streaming were added after the original scoped tasks once Spike A confirmed the `10011` still-image feed.
-
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add opt-in cook-done doorbell, food-probe temperature sensors, and config-driven cook-mode switches to `homebridge-june-oven`, and document why timer/progress are intentionally omitted.

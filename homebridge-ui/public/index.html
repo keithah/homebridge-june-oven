@@ -350,8 +350,17 @@
       row.querySelector('.field-mode-label').addEventListener('change', event => updateMode(index, modeIndex, 'label', event.target.value));
       row.querySelector('.field-mode-type').addEventListener('change', event => updateMode(index, modeIndex, 'primitiveType', event.target.value));
       row.querySelector('.field-mode-temp').addEventListener('change', event => {
-        const tempF = Number(event.target.value);
-        updateMode(index, modeIndex, 'tempF', Number.isFinite(tempF) ? tempF : 350);
+        const rawValue = event.target.value;
+        if (rawValue === '' || rawValue == null) {
+          updateMode(index, modeIndex, 'tempF', 350);
+          return;
+        }
+        const tempF = Number(rawValue);
+        if (!Number.isFinite(tempF) || tempF < 100 || tempF > 550) {
+          updateMode(index, modeIndex, 'tempF', 350);
+          return;
+        }
+        updateMode(index, modeIndex, 'tempF', tempF);
       });
       row.querySelector('.remove-mode').addEventListener('click', () => removeMode(index, modeIndex));
     });
