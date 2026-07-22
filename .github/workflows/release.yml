@@ -3,6 +3,12 @@ name: Publish to npm
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish (for example, v0.2.2)
+        required: true
+        default: v0.2.2
 
 jobs:
   publish:
@@ -22,6 +28,10 @@ jobs:
       - name: Verify tag matches package.json version
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_VERSION="${{ inputs.tag }}"
+            TAG_VERSION="${TAG_VERSION#v}"
+          fi
           PKG_VERSION="$(node -p "require('./package.json').version")"
           if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
             echo "::error::Release tag v$TAG_VERSION does not match package.json version $PKG_VERSION"
@@ -32,12 +42,8 @@ jobs:
 
       - name: Publish (beta)
         if: github.event.release.prerelease == true
-        run: npm publish --tag beta --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --tag beta --access public
 
       - name: Publish (stable)
-        if: github.event.release.prerelease == false
-        run: npm publish --tag latest --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
+        run: npm publish --tag latest --access public
