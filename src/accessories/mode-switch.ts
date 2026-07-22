@@ -11,6 +11,13 @@ import type { JuneModeConfig } from '../protocol';
  */
 export class JuneModeSwitchAccessory {
   private readonly services = new Map<string, { service: Service; mode: JuneModeConfig }>();
+  private commandInFlight = false;
+  private queuedCommands = 0;
+  private commandTail: Promise<void> = Promise.resolve();
+  // Set to the subtype of a mode whose start was acked but which the oven has
+  // not yet reported as 'active' (e.g. still preheating). While set, inactive
+  // telemetry must not flip the just-enabled switch back off.
+  private awaitingActiveSubtype?: string;
 
   constructor(
     private readonly platform: JunePlatform,
@@ -19,7 +26,9 @@ export class JuneModeSwitchAccessory {
   ) {
     const { Service, Characteristic } = this.platform;
     const configuredSubtypes = new Set(this.client.config.modes.map(mode => `mode-${mode.primitiveType}`));
-    for (const service of this.accessory.services) {
+    // Iterate a snapshot: removeService() splices the live services array, which
+    // would otherwise skip the element shifted into the removed slot.
+    for (const service of [...this.accessory.services]) {
       if (service.subtype?.startsWith('mode-') && !configuredSubtypes.has(service.subtype)) {
         this.accessory.removeService(service);
       }
@@ -36,9 +45,23 @@ export class JuneModeSwitchAccessory {
   }
 
   private update(telemetry: JuneTelemetry): void {
-    if (telemetry.active === false) {
-      this.setAllOff();
+    if (telemetry.active === true) {
+      this.clearAwaitingActiveLatch();
+      return;
     }
+    if (this.commandInFlight || telemetry.active !== false) {
+      return;
+    }
+    if (this.awaitingActiveSubtype) {
+      // A start was acked but the oven has not reported 'active' yet; keep the
+      // switch on until it does (or until the mode is cancelled).
+      return;
+    }
+    this.setAllOff();
+  }
+
+  private clearAwaitingActiveLatch(): void {
+    this.awaitingActiveSubtype = undefined;
   }
 
   private setAllOff(except?: string): void {
@@ -49,7 +72,18 @@ export class JuneModeSwitchAccessory {
     }
   }
 
-  private async setOn(subtype: string, value: CharacteristicValue): Promise<void> {
+  private setOn(subtype: string, value: CharacteristicValue): Promise<void> {
+    this.queuedCommands++;
+    this.commandInFlight = true;
+    const operation = this.commandTail.then(() => this.runCommand(subtype, value));
+    this.commandTail = operation.catch(() => undefined);
+    return operation.finally(() => {
+      this.queuedCommands--;
+      this.commandInFlight = this.queuedCommands > 0;
+    });
+  }
+
+  private async runCommand(subtype: string, value: CharacteristicValue): Promise<void> {
     const entry = this.services.get(subtype);
     if (!entry) {
       return;
@@ -63,7 +97,11 @@ export class JuneModeSwitchAccessory {
       return;
     }
     if (value) {
+      this.clearAwaitingActiveLatch();
+      this.awaitingActiveSubtype = subtype;
       this.setAllOff(subtype);
+    } else {
+      this.clearAwaitingActiveLatch();
     }
   }
 }

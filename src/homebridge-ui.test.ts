@@ -50,4 +50,12 @@ describe('June Oven custom UI configuration', () => {
     const html = await readFile('homebridge-ui/public/index.html', 'utf8');
     expect(html).not.toContain('homebridge.showSchemaForm');
   });
+
+  test('serializes pairing polls instead of starting overlapping intervals', async () => {
+    const html = await readFile('homebridge-ui/public/index.html', 'utf8');
+
+    expect(html).not.toContain('setInterval(() => pollStatus');
+    expect(html).toContain('pollTimer = setTimeout');
+    expect(html).not.toContain('function withTimeout');
+  });
 });

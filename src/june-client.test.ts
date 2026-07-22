@@ -29,9 +29,23 @@ describe('parseCameraFrame', () => {
     expect(out).toEqual({ url: 'https://api.junelife.com/media/img.jpe?X-Amz-x', contentType: 'image/jpeg' });
   });
 
-  it('falls back to signed_url when image_url is absent', () => {
-    const out = parseCameraFrame({ signed_url: 'https://s3/img.jpe' });
-    expect(out?.url).toBe('https://s3/img.jpe');
+  it('falls back to the trusted signed_url when image_url is absent', () => {
+    const out = parseCameraFrame({ signed_url: 'https://june-api.s3.amazonaws.com/media/img.jpe' });
+    expect(out?.url).toBe('https://june-api.s3.amazonaws.com/media/img.jpe');
+  });
+
+  it('rejects untrusted or non-HTTPS snapshot URLs', () => {
+    expect(parseCameraFrame({ image_url: 'http://api.junelife.com/media/img.jpe' })).toBeNull();
+    expect(parseCameraFrame({ image_url: 'https://127.0.0.1/admin' })).toBeNull();
+    expect(parseCameraFrame({ signed_url: 'file:///etc/passwd' })).toBeNull();
+  });
+
+  it('uses a trusted signed_url when image_url is untrusted', () => {
+    const out = parseCameraFrame({
+      image_url: 'https://127.0.0.1/admin',
+      signed_url: 'https://june-api.s3.amazonaws.com/media/img.jpe',
+    });
+    expect(out?.url).toBe('https://june-api.s3.amazonaws.com/media/img.jpe');
   });
 
   it('returns null when no url is present', () => {

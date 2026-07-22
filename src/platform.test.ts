@@ -93,6 +93,7 @@ function serviceType(name: string): FakeServiceType {
 class FakeAccessory {
   public context: Record<string, unknown> = {};
   public displayName: string;
+  public readonly configureController = vi.fn();
   private readonly services: FakeService[] = [];
 
   constructor(name: string, public readonly UUID: string) {
@@ -126,6 +127,16 @@ function createApi() {
   const shutdownCallbacks: Array<() => void> = [];
   const registered: FakeAccessory[] = [];
   const unregistered: FakeAccessory[] = [];
+  const published: FakeAccessory[] = [];
+  class FakeCameraController {
+    public static generateSynchronisationSource(): number {
+      return 1;
+    }
+    constructor(public readonly options: unknown) {}
+  }
+  class FakeDoorbellController extends FakeCameraController {
+    public readonly ringDoorbell = vi.fn();
+  }
   const Service = {
     AccessoryInformation: serviceType('AccessoryInformation'),
     CameraRTPStreamManagement: serviceType('CameraRTPStreamManagement'),
@@ -155,6 +166,11 @@ function createApi() {
       hap: {
         Characteristic,
         Service,
+        CameraController: FakeCameraController,
+        DoorbellController: FakeDoorbellController,
+        H264Level: { LEVEL3_1: 1, LEVEL3_2: 2, LEVEL4_0: 3 },
+        H264Profile: { BASELINE: 1, MAIN: 2, HIGH: 3 },
+        SRTPCryptoSuites: { AES_CM_128_HMAC_SHA1_80: 1 },
         uuid: { generate: (input: string) => `uuid:${input}` },
       },
       on: (event: string, callback: () => void) => {
@@ -167,11 +183,13 @@ function createApi() {
       platformAccessory: FakeAccessory,
       registerPlatformAccessories: (_plugin: string, _platform: string, accessories: FakeAccessory[]) => registered.push(...accessories),
       unregisterPlatformAccessories: (_plugin: string, _platform: string, accessories: FakeAccessory[]) => unregistered.push(...accessories),
+      publishExternalAccessories: (_plugin: string, accessories: FakeAccessory[]) => published.push(...accessories),
     },
     launch: () => launchCallbacks.forEach(callback => callback()),
     shutdown: () => shutdownCallbacks.forEach(callback => callback()),
     registered,
     unregistered,
+    published,
   };
 }
 
@@ -229,6 +247,48 @@ describe('JunePlatform probe accessory registration', () => {
     launch();
 
     expect(unregistered).toContain(legacy);
+  });
+
+  it('publishes a camera accessory externally rather than bridged', async () => {
+    const { JunePlatform } = await import('./platform');
+    const { api, launch, registered, published } = createApi();
+    new JunePlatform(console, {
+      platform: 'JuneOven',
+      ovens: [{
+        ovenId: 'oven-1', deviceId: 'device', deviceName: 'Homebridge', password: 'password',
+        ed25519SeedHex: 'ab', name: 'Kitchen', preheatSwitchName: '', readySensor: false, doneSensor: false,
+        camera: { enabled: true, name: 'Kitchen Camera' },
+      }],
+    }, api as never);
+
+    launch();
+
+    expect(published.map(accessory => accessory.displayName)).toContain('Kitchen Camera');
+    expect(registered.map(accessory => accessory.displayName)).not.toContain('Kitchen Camera');
+    const camera = published.find(accessory => accessory.displayName === 'Kitchen Camera');
+    expect(camera?.configureController).toHaveBeenCalledOnce();
+  });
+
+  it('publishes a video doorbell externally with a DoorbellController', async () => {
+    const { JunePlatform } = await import('./platform');
+    const { api, launch, registered, published } = createApi();
+    new JunePlatform(console, {
+      platform: 'JuneOven',
+      ovens: [{
+        ovenId: 'oven-1', deviceId: 'device', deviceName: 'Homebridge', password: 'password',
+        ed25519SeedHex: 'ab', name: 'Kitchen', preheatSwitchName: '', readySensor: false, doneSensor: false,
+        doorbell: { enabled: true, name: 'Kitchen Doorbell' },
+        camera: { enabled: true, name: 'Kitchen Camera' },
+      }],
+    }, api as never);
+
+    launch();
+
+    expect(published.map(accessory => accessory.displayName)).toContain('Kitchen Doorbell');
+    expect(registered.map(accessory => accessory.displayName)).not.toContain('Kitchen Doorbell');
+    const doorbell = published.find(accessory => accessory.displayName === 'Kitchen Doorbell');
+    const controller = doorbell?.configureController.mock.calls[0][0];
+    expect(controller.constructor.name).toBe('FakeDoorbellController');
   });
 
   it('stops every client during Homebridge shutdown', async () => {

@@ -67,6 +67,66 @@ describe('June event accessories', () => {
     const detected = service.updateCharacteristic.mock.calls.filter(([, value]) => value === 1);
     expect(detected).toHaveLength(1);
   });
+
+  it('keeps activation latch during a long preheat', async () => {
+    vi.useFakeTimers();
+    const service = new FakeService('mode-bake');
+    const services = [service];
+    const accessory = {
+      services,
+      getServiceById: (_type: unknown, subtype: string) => services.find(s => s.subtype === subtype),
+      addService: (_type: unknown, _name: string, subtype: string) => {
+        const s = new FakeService(subtype);
+        services.push(s);
+        return s;
+      },
+      removeService: vi.fn(),
+    };
+    const client = new EventEmitter() as any;
+    client.config = { modes: [{ label: 'Bake', primitiveType: 'bake', tempF: 350 }] };
+    client.startMode = vi.fn().mockResolvedValue('success');
+    const platform = fakePlatform();
+
+    new JuneModeSwitchAccessory(platform as never, accessory as never, client);
+    const setOnHandler = service.getCharacteristic.mock.results[0].value.onSet.mock.calls[0][0];
+
+    await setOnHandler(true);
+    client.emit('telemetry', { active: false });
+    expect(service.updateCharacteristic).not.toHaveBeenCalledWith('On', false);
+
+    await vi.advanceTimersByTimeAsync(90_000);
+    client.emit('telemetry', { active: false });
+    expect(service.updateCharacteristic).not.toHaveBeenCalledWith('On', false);
+  });
+
+  it('allows active:false to turn off switch immediately after successful cancel', async () => {
+    const service = new FakeService('mode-bake');
+    const services = [service];
+    const accessory = {
+      services,
+      getServiceById: (_type: unknown, subtype: string) => services.find(s => s.subtype === subtype),
+      addService: (_type: unknown, _name: string, subtype: string) => {
+        const s = new FakeService(subtype);
+        services.push(s);
+        return s;
+      },
+      removeService: vi.fn(),
+    };
+    const client = new EventEmitter() as any;
+    client.config = { modes: [{ label: 'Bake', primitiveType: 'bake', tempF: 350 }] };
+    client.startMode = vi.fn().mockResolvedValue('success');
+    client.cancel = vi.fn().mockResolvedValue('success');
+    const platform = fakePlatform();
+
+    new JuneModeSwitchAccessory(platform as never, accessory as never, client);
+    const setOnHandler = service.getCharacteristic.mock.results[0].value.onSet.mock.calls[0][0];
+
+    await setOnHandler(true);
+    service.updateCharacteristic.mockClear();
+    await setOnHandler(false);
+    client.emit('telemetry', { active: false });
+    expect(service.updateCharacteristic).toHaveBeenCalledWith('On', false);
+  });
 });
 
 function fakePlatform() {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import sodium from 'libsodium-wrappers';
-import { buildFrame, fahrenheitToMilliC, milliCToCelsius, milliCToFahrenheit, normalizeOvenConfig, signFrame } from './protocol';
+import { buildFrame, fahrenheitToMilliC, milliCToCelsius, milliCToFahrenheit, normalizeOvenConfig, parseJuneTokenResponse, signFrame } from './protocol';
 
 describe('temperature conversion', () => {
   it('matches the June milli-Celsius wire units', () => {
@@ -54,11 +54,28 @@ describe('normalizeOvenConfig new options', () => {
     const n = normalizeOvenConfig({
       ...base,
       modes: [
-        { primitiveType: 'toast' } as never,
-        { label: '', primitiveType: '' } as never,
+        { primitiveType: 'toast' },
+        { label: '', primitiveType: '' },
+        { label: 'Broken' } as never,
       ],
     });
     expect(n.modes).toEqual([{ label: 'toast', primitiveType: 'toast', tempF: 350 }]);
+  });
+
+  it('normalizes invalid mode temperatures to 350°F', () => {
+    const n = normalizeOvenConfig({
+      ...base,
+      modes: [
+        { primitiveType: 'low', tempF: 99 },
+        { primitiveType: 'high', tempF: 551 },
+        { primitiveType: 'infinite', tempF: Number.POSITIVE_INFINITY },
+        { primitiveType: 'nan', tempF: Number.NaN },
+        { primitiveType: 'minimum', tempF: 100 },
+        { primitiveType: 'maximum', tempF: 550 },
+      ],
+    });
+
+    expect(n.modes.map(mode => mode.tempF)).toEqual([350, 350, 350, 350, 100, 550]);
   });
 });
 
@@ -79,5 +96,12 @@ describe('signed frames', () => {
 
     expect(signature).toHaveLength(72);
     expect(Object.keys(signed)).toEqual(['v', 'message_code', 'order', 'time', 'signature', 'device_name', 'device_id', 'data', 'target']);
+  });
+});
+
+describe('June token decoding', () => {
+  it('accepts a valid access token when refresh_token is null', () => {
+    expect(parseJuneTokenResponse({ token: { access_token: 'access', refresh_token: null } }))
+      .toEqual({ accessToken: 'access', refreshToken: undefined });
   });
 });

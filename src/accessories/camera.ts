@@ -2,7 +2,9 @@ import { createSocket, Socket } from 'dgram';
 import { spawn, ChildProcess } from 'child_process';
 import type {
   CameraController,
+  CameraControllerOptions,
   CameraStreamingDelegate,
+  DoorbellController,
   PlatformAccessory,
   PrepareStreamCallback,
   PrepareStreamRequest,
@@ -14,7 +16,7 @@ import type {
 } from 'homebridge';
 import type { JuneClient } from '../june-client';
 import type { JunePlatform } from '../platform';
-import { fetchWithTimeout, readResponseBuffer } from '../http';
+import { fetchBufferWithTimeout } from '../http';
 
 const MAX_CAMERA_FRAME_BYTES = 10 * 1024 * 1024;
 
@@ -25,15 +27,61 @@ const PLACEHOLDER_JPEG = Buffer.from(
   'base64',
 );
 
-interface Session {
-  socket?: Socket;
-  ffmpeg?: ChildProcess;
-  pump?: ReturnType<typeof setInterval>;
-  frameFetch?: AbortController;
-  targetAddress: string;
-  videoPort: number;
-  videoSsrc: number;
-  videoSrtp: string; // base64(key + salt)
+type CameraSessionPhase = 'prepared' | 'starting' | 'streaming' | 'stopped';
+
+class CameraStreamSession {
+  public phase: CameraSessionPhase = 'prepared';
+  public ffmpeg?: ChildProcess;
+  public pump?: ReturnType<typeof setInterval>;
+  private startCallback?: (error?: Error) => void;
+
+  constructor(
+    public readonly socket: Socket,
+    public readonly targetAddress: string,
+    public readonly videoPort: number,
+    public readonly videoSsrc: number,
+    public readonly videoSrtp: string,
+  ) {}
+
+  public beginStart(callback: (error?: Error) => void): void {
+    this.phase = 'starting';
+    this.startCallback = callback;
+  }
+
+  public finishStart(error?: Error): void {
+    const callback = this.startCallback;
+    this.startCallback = undefined;
+    callback?.(error);
+  }
+
+  public markStreaming(): void {
+    this.phase = 'streaming';
+  }
+
+  public stop(error = new Error('Streaming session stopped before ffmpeg started')): void {
+    if (this.phase === 'stopped') {
+      return;
+    }
+    this.phase = 'stopped';
+    if (this.pump) {
+      clearInterval(this.pump);
+      this.pump = undefined;
+    }
+    this.finishStart(error);
+    if (this.ffmpeg?.stdin && !this.ffmpeg.stdin.destroyed) {
+      try {
+        this.ffmpeg.stdin.end();
+      } catch {
+        // stdin may already be closed
+      }
+    }
+    this.ffmpeg?.kill('SIGKILL');
+    try {
+      this.socket.close();
+    } catch {
+      // socket may already be closed
+    }
+  }
 }
 
 /**
@@ -49,14 +97,18 @@ interface Session {
  */
 export class JuneCameraSource implements CameraStreamingDelegate {
   public readonly controller: CameraController;
-  private readonly sessions = new Map<string, Session>();
+  private readonly doorbellController?: DoorbellController;
+  private readonly sessions = new Map<string, CameraStreamSession>();
+  private cachedFrame?: { url: string; frame: Buffer };
+  private frameFetch?: { url: string; promise: Promise<Buffer> };
 
   constructor(
     private readonly platform: JunePlatform,
     private readonly client: JuneClient,
+    asDoorbell = false,
   ) {
     const hap = this.platform.api.hap;
-    this.controller = new hap.CameraController({
+    const options: CameraControllerOptions = {
       cameraStreamCount: 2,
       delegate: this,
       streamingOptions: {
@@ -77,7 +129,21 @@ export class JuneCameraSource implements CameraStreamingDelegate {
         // omitting it crashes the stream ("Audio was enabled but not supplied"). audio is
         // optional in CameraStreamingOptions, so we leave it out.
       },
-    });
+    };
+    // A video doorbell needs a DoorbellController (which owns the Doorbell
+    // service and rings via ringDoorbell()); a plain camera uses CameraController.
+    // DoorbellController extends CameraController, so the delegate wiring is identical.
+    if (asDoorbell) {
+      this.doorbellController = new hap.DoorbellController(options);
+      this.controller = this.doorbellController;
+    } else {
+      this.controller = new hap.CameraController(options);
+    }
+    this.platform.api.on('shutdown', () => this.stopAllSessions());
+  }
+
+  public ringDoorbell(): void {
+    this.doorbellController?.ringDoorbell();
   }
 
   public async handleSnapshotRequest(_request: SnapshotRequest, callback: SnapshotRequestCallback): Promise<void> {
@@ -87,52 +153,96 @@ export class JuneCameraSource implements CameraStreamingDelegate {
       return;
     }
     try {
-      const response = await fetchWithTimeout(snapshot.url, {}, 5000);
-      if (!response.ok) {
-        throw new Error(`snapshot fetch ${response.status}`);
-      }
-      callback(undefined, await readResponseBuffer(response, MAX_CAMERA_FRAME_BYTES));
+      callback(undefined, await this.fetchFrame(snapshot.url));
     } catch (error) {
       this.platform.log.warn(`June camera snapshot failed: ${(error as Error).message}`);
       callback(undefined, PLACEHOLDER_JPEG);
     }
   }
 
+  private fetchFrame(url: string): Promise<Buffer> {
+    if (this.cachedFrame?.url === url) {
+      return Promise.resolve(this.cachedFrame.frame);
+    }
+    if (this.frameFetch?.url === url) {
+      return this.frameFetch.promise;
+    }
+    const promise = fetchBufferWithTimeout(url, { redirect: 'error' }, 5000, MAX_CAMERA_FRAME_BYTES)
+      .then(({ response, body }) => {
+        if (!response.ok) {
+          throw new Error(`camera frame fetch ${response.status}`);
+        }
+        this.cachedFrame = { url, frame: body };
+        return body;
+      })
+      .finally(() => {
+        if (this.frameFetch?.url === url) {
+          this.frameFetch = undefined;
+        }
+      });
+    this.frameFetch = { url, promise };
+    return promise;
+  }
+
   public prepareStream(request: PrepareStreamRequest, callback: PrepareStreamCallback): void {
-    const socket = createSocket(request.addressVersion === 'ipv6' ? 'udp6' : 'udp4');
-    let prepared = false;
-    socket.once('error', error => {
+    let socket: Socket;
+    try {
+      socket = createSocket(request.addressVersion === 'ipv6' ? 'udp6' : 'udp4');
+    } catch (error) {
+      callback(error as Error);
+      return;
+    }
+    let settled = false;
+    const finish = (error?: Error, response?: Parameters<PrepareStreamCallback>[1]) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      callback(error, response);
+    };
+    socket.on('error', error => {
       this.platform.log.warn(`June camera RTCP socket error: ${error.message}`);
-      if (!prepared) {
-        prepared = true;
-        try { socket.close(); } catch { /* already closed */ }
-        callback(error);
+      if (!settled) {
+        try {
+          socket.close();
+        } catch {
+          // socket may not have finished binding
+        }
+        finish(new Error(`RTCP socket error: ${error.message}`));
       } else {
-        this.stopSession(request.sessionID);
+        this.failSession(request.sessionID);
       }
     });
     socket.bind(() => {
-      if (prepared) {
+      if (settled) {
         return;
       }
-      prepared = true;
-      const localPort = socket.address().port;
-      const ssrc = this.platform.api.hap.CameraController.generateSynchronisationSource();
-      this.sessions.set(request.sessionID, {
-        socket,
-        targetAddress: request.targetAddress,
-        videoPort: request.video.port,
-        videoSsrc: ssrc,
-        videoSrtp: Buffer.concat([request.video.srtp_key, request.video.srtp_salt]).toString('base64'),
-      });
-      callback(undefined, {
-        video: {
-          port: localPort,
+      try {
+        const localPort = socket.address().port;
+        const ssrc = this.platform.api.hap.CameraController.generateSynchronisationSource();
+        this.sessions.set(request.sessionID, new CameraStreamSession(
+          socket,
+          request.targetAddress,
+          request.video.port,
           ssrc,
-          srtp_key: request.video.srtp_key,
-          srtp_salt: request.video.srtp_salt,
-        },
-      });
+          Buffer.concat([request.video.srtp_key, request.video.srtp_salt]).toString('base64'),
+        ));
+        finish(undefined, {
+          video: {
+            port: localPort,
+            ssrc,
+            srtp_key: request.video.srtp_key,
+            srtp_salt: request.video.srtp_salt,
+          },
+        });
+      } catch (error) {
+        try {
+          socket.close();
+        } catch {
+          // socket may already be closed
+        }
+        finish(error as Error);
+      }
     });
   }
 
@@ -192,12 +302,18 @@ export class JuneCameraSource implements CameraStreamingDelegate {
       return;
     }
     session.ffmpeg = proc;
-    let started = false;
+    session.beginStart(callback);
     proc.once('error', error => {
       this.platform.log.error(`June camera ffmpeg error: ${error.message} (is ffmpeg installed at "${ffmpegPath}"?)`);
-      this.stopSession(request.sessionID);
-      if (!started) {
-        callback(new Error('ffmpeg not available'));
+      session.ffmpeg = undefined;
+      if (!this.sessions.has(request.sessionID)) {
+        return; // session already torn down
+      }
+      if (session.phase === 'streaming') {
+        this.failSession(request.sessionID);
+      } else {
+        session.finishStart(new Error('ffmpeg not available'));
+        this.stopSession(request.sessionID);
       }
     });
     proc.stdin?.on('error', () => { /* ignore EPIPE once ffmpeg exits */ });
@@ -206,7 +322,18 @@ export class JuneCameraSource implements CameraStreamingDelegate {
       if (code !== null && code !== 0 && signal !== 'SIGKILL') {
         this.platform.log.warn(`June camera ffmpeg exited with code ${code}`);
       }
-      this.stopSession(request.sessionID);
+      session.ffmpeg = undefined;
+      if (!this.sessions.has(request.sessionID)) {
+        // A clean STOP already SIGKILLed ffmpeg and removed the session; don't
+        // force-stop a session HomeKit has already torn down.
+        return;
+      }
+      if (session.phase === 'streaming') {
+        this.failSession(request.sessionID);
+      } else {
+        session.finishStart(new Error('ffmpeg exited before streaming started'));
+        this.stopSession(request.sessionID);
+      }
     });
 
     // Pump the oven's latest still into ffmpeg at ~fps, refetching only when the
@@ -222,12 +349,7 @@ export class JuneCameraSource implements CameraStreamingDelegate {
         fetching = true;
         lastUrl = snap.url;
         try {
-          session.frameFetch?.abort();
-          session.frameFetch = new AbortController();
-          const response = await fetchWithTimeout(snap.url, { signal: session.frameFetch.signal }, 5000);
-          if (response.ok) {
-            lastFrame = await readResponseBuffer(response, MAX_CAMERA_FRAME_BYTES);
-          }
+          lastFrame = await this.fetchFrame(snap.url);
         } catch {
           // keep the previous frame on a transient fetch failure
         } finally {
@@ -239,10 +361,16 @@ export class JuneCameraSource implements CameraStreamingDelegate {
       }
     };
     proc.once('spawn', () => {
-      started = true;
+      if (session.phase === 'stopped') {
+        // Session was stopped/failed before ffmpeg finished spawning; kill the
+        // orphaned process instead of leaking a pump interval against it.
+        proc.kill('SIGKILL');
+        return;
+      }
+      session.markStreaming();
       session.pump = setInterval(() => { void pump(); }, Math.round(1000 / fps));
       void pump();
-      callback();
+      session.finishStart();
     });
   }
 
@@ -251,28 +379,29 @@ export class JuneCameraSource implements CameraStreamingDelegate {
     if (!session) {
       return;
     }
-    if (session.pump) {
-      clearInterval(session.pump);
-    }
-    session.frameFetch?.abort();
-    if (session.ffmpeg?.stdin && !session.ffmpeg.stdin.destroyed) {
-      try {
-        session.ffmpeg.stdin.end();
-      } catch {
-        // stdin may already be closed
-      }
-    }
-    session.ffmpeg?.kill('SIGKILL');
-    try {
-      session.socket?.close();
-    } catch {
-      // socket may already be closed
-    }
+    session.stop();
     this.sessions.delete(sessionID);
+  }
+
+  private failSession(sessionID: string): void {
+    this.controller.forceStopStreamingSession(sessionID);
+    this.stopSession(sessionID);
+  }
+
+  private stopAllSessions(): void {
+    for (const sessionID of [...this.sessions.keys()]) {
+      this.stopSession(sessionID);
+    }
   }
 }
 
-export function attachCamera(platform: JunePlatform, accessory: PlatformAccessory, client: JuneClient): void {
-  const source = new JuneCameraSource(platform, client);
+export function attachCamera(
+  platform: JunePlatform,
+  accessory: PlatformAccessory,
+  client: JuneClient,
+  asDoorbell = false,
+): JuneCameraSource {
+  const source = new JuneCameraSource(platform, client, asDoorbell);
   accessory.configureController(source.controller);
+  return source;
 }

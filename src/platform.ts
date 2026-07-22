@@ -13,7 +13,7 @@ import { JuneClient } from './june-client';
 import { JuneThermostatAccessory } from './accessories/thermostat';
 import { JunePreheatSwitchAccessory } from './accessories/preheat-switch';
 import { JuneOccupancySensorAccessory } from './accessories/sensors';
-import { JuneDoorbellAccessory } from './accessories/doorbell';
+import { JuneDoorbellAccessory, watchDoorbellTriggers } from './accessories/doorbell';
 import { JuneModeSwitchAccessory } from './accessories/mode-switch';
 import { JuneProbeSensorAccessory } from './accessories/probe-sensor';
 import { attachCamera } from './accessories/camera';
@@ -23,7 +23,7 @@ export interface JunePlatformConfig extends PlatformConfig {
   ovens?: JuneOvenConfig[];
 }
 
-type AccessoryKind = 'thermostat' | 'preheat' | 'ready' | 'done' | 'doorbell' | 'modes' | 'probe' | 'camera';
+type AccessoryKind = 'thermostat' | 'preheat' | 'ready' | 'done' | 'doorbell' | 'modes' | 'probe';
 
 export class JunePlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service;
@@ -75,11 +75,14 @@ export class JunePlatform implements DynamicPlatformPlugin {
       if (oven.doneSensor !== false) {
         this.bindAccessory(client, 'done', `${oven.name || 'June'} Done`, wanted);
       }
-      if (client.config.doorbell.enabled) {
-        // Camera (if enabled) attaches to this same accessory → Video Doorbell.
+      if (client.config.doorbell.enabled && client.config.camera.enabled) {
+        // Doorbell + camera → a Video Doorbell, published externally.
+        this.bindCameraAccessory(client, 'doorbell', client.config.doorbell.name);
+      } else if (client.config.doorbell.enabled) {
+        // Camera-less doorbell stays a plain bridged Doorbell service.
         this.bindAccessory(client, 'doorbell', client.config.doorbell.name, wanted);
       } else if (client.config.camera.enabled) {
-        this.bindAccessory(client, 'camera', client.config.camera.name, wanted);
+        this.bindCameraAccessory(client, 'camera', client.config.camera.name);
       }
       if (client.config.modes.length > 0) {
         this.bindAccessory(client, 'modes', `${oven.name || 'June'} Modes`, wanted);
@@ -93,6 +96,26 @@ export class JunePlatform implements DynamicPlatformPlugin {
     if (stale.length) {
       this.api.unregisterPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, stale);
     }
+  }
+
+  /**
+   * Camera and video-doorbell accessories carry a HomeKit CameraController,
+   * which HomeKit only renders on accessories published *externally* (not on
+   * bridged accessories). External accessories are not restored via
+   * configureAccessory, so they are recreated and republished every launch and
+   * deliberately kept out of the bridged-accessory cache / stale-cleanup set.
+   */
+  private bindCameraAccessory(client: JuneClient, kind: 'doorbell' | 'camera', name: string): void {
+    const uuid = this.api.hap.uuid.generate(`${client.config.ovenId}:${kind}`);
+    const accessory = new this.api.platformAccessory(name, uuid);
+    accessory.context.ovenId = client.config.ovenId;
+    accessory.context.kind = kind;
+    const isDoorbell = kind === 'doorbell';
+    const source = attachCamera(this, accessory, client, isDoorbell);
+    if (isDoorbell) {
+      watchDoorbellTriggers(client, () => source.ringDoorbell());
+    }
+    this.api.publishExternalAccessories(PLUGIN_NAME, [accessory]);
   }
 
   private bindAccessory(client: JuneClient, kind: AccessoryKind, name: string, wanted: Set<string>): void {
@@ -113,16 +136,11 @@ export class JunePlatform implements DynamicPlatformPlugin {
       new JunePreheatSwitchAccessory(this, accessory, client);
     } else if (kind === 'doorbell') {
       new JuneDoorbellAccessory(this, accessory, client);
-      if (client.config.camera.enabled) {
-        attachCamera(this, accessory, client);
-      }
-    } else if (kind === 'camera') {
-      attachCamera(this, accessory, client);
     } else if (kind === 'modes') {
       new JuneModeSwitchAccessory(this, accessory, client);
     } else if (kind === 'probe') {
       new JuneProbeSensorAccessory(this, accessory, client);
-    } else {
+    } else if (kind === 'ready' || kind === 'done') {
       new JuneOccupancySensorAccessory(this, accessory, client, kind);
     }
   }

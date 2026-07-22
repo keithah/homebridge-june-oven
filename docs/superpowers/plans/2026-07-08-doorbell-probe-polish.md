@@ -10,7 +10,7 @@
 
 ---
 
-### Task 1: Remove Unsupported Door-Open Trigger
+## Task 1: Remove Unsupported Door-Open Trigger
 
 **Files:**
 - Modify: `src/protocol.ts`
@@ -42,7 +42,7 @@ Remove `doorOpen` from `config.schema.json` properties and form list. Remove sta
 Run: `npm test -- src/protocol.test.ts`
 Expected: PASS.
 
-### Task 2: Singular Probe Accessory and Legacy Cleanup
+## Task 2: Singular Probe Accessory and Legacy Cleanup
 
 **Files:**
 - Modify: `src/platform.ts`
@@ -70,7 +70,7 @@ In `src/platform.ts`, ensure the previous UUID generated from `${client.config.o
 Run: `npm test -- src/platform.test.ts`
 Expected: PASS.
 
-### Task 3: Full Verification
+## Task 3: Full Verification
 
 **Files:**
 - No new files beyond Tasks 1-2.

@@ -12,11 +12,13 @@ import {
   MC_PREHEAT,
   milliCToCelsius,
   normalizeOvenConfig,
+  parseJuneTokenResponse,
   NormalizedJuneConfig,
   JuneOvenConfig,
   signedFrame,
 } from './protocol';
-import { fetchWithTimeout } from './http';
+import { fetchJsonWithTimeout, isRetryableHttpStatus, JuneHttpError } from './http';
+import { parseCameraFrame, parseProbeTelemetry, type JuneSnapshot } from './protocol-decode';
 
 export interface JuneTelemetry {
   currentTempC?: number;
@@ -29,44 +31,30 @@ export interface JuneTelemetry {
   probePresent?: boolean;
 }
 
-export interface JuneSnapshot {
-  url: string;
-  contentType: string;
-}
+export { parseCameraFrame, parseProbeTelemetry } from './protocol-decode';
+export type { JuneSnapshot } from './protocol-decode';
 
-// A 10011 camera frame carries a pre-signed still-JPEG URL (image_url = CDN,
-// signed_url = direct S3), valid ~300 s, pushed ~1/s during a cook.
-export function parseCameraFrame(data: any): JuneSnapshot | null {
-  const url = typeof data?.image_url === 'string' ? data.image_url
-    : typeof data?.signed_url === 'string' ? data.signed_url : undefined;
-  if (!url) {
-    return null;
-  }
-  return { url, contentType: typeof data?.content_type === 'string' ? data.content_type : 'image/jpeg' };
-}
+// A 10011 frame's pre-signed URL is valid ~300 s. Treat a cached snapshot as
+// gone once it is close to expiry so idle live-view taps fail fast (with the
+// placeholder) instead of spawning ffmpeg against a URL that now 403s.
+const SNAPSHOT_TTL_MS = 240_000;
+const RETRY_BASE_MS = 1_000;
+const RETRY_MAX_MS = 120_000;
 
-// Confirmed live (2026-07-08): 10013 sensor_data.probe is an array of
-// { id: "left", value: <milli-C> } entries. The June oven has a single food
-// probe, so we read the first reporting entry; probe presence is inferred from
-// the array having entries (there is no food_present field).
-export function parseProbeTelemetry(data: any): Pick<JuneTelemetry, 'probeC' | 'probePresent'> {
-  const probes = Array.isArray(data?.sensor_data?.probe) ? data.sensor_data.probe : undefined;
-  const out: Pick<JuneTelemetry, 'probeC' | 'probePresent'> = {};
-  if (!probes) {
-    return out;
-  }
-  const entry = probes.find((p: any) => p && typeof p.value === 'number');
-  if (entry) {
-    out.probeC = milliCToCelsius(entry.value);
-  }
-  out.probePresent = probes.length > 0;
-  return out;
+export function calculateRetryDelay(attempt: number, random = Math.random): number {
+  const exponential = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1));
+  return Math.min(RETRY_MAX_MS, Math.round(exponential * (0.5 + random())));
 }
 
 export interface JuneClientEvents {
   telemetry: [JuneTelemetry];
   token: [{ accessToken: string; refreshToken: string }];
   warning: [string];
+}
+
+interface PendingCommand {
+  resolve: (status: string | null) => void;
+  timer: NodeJS.Timeout;
 }
 
 export declare interface JuneClient {
@@ -79,18 +67,25 @@ export class JuneClient extends EventEmitter {
   private ws?: WebSocket;
   private keepalive?: NodeJS.Timeout;
   private reconnect?: NodeJS.Timeout;
+  private startupRetry?: NodeJS.Timeout;
+  private reconnectAttempt = 0;
+  private startupAttempt = 0;
   private statusPoll?: NodeJS.Timeout;
   private connectPromise?: Promise<void>;
   private refreshPromise?: Promise<void>;
   private statusPromise?: Promise<void>;
   private stopped = false;
-  private readonly pending = new Map<number, (status: string | null) => void>();
+  private readonly pending = new Map<number, PendingCommand>();
   private lastActive = false;
   private lastCancelled = false;
   private lastTargetTempC?: number;
   private snapshot?: JuneSnapshot;
+  private snapshotAt = 0;
 
   public get latestSnapshot(): JuneSnapshot | undefined {
+    if (this.snapshot && Date.now() - this.snapshotAt > SNAPSHOT_TTL_MS) {
+      return undefined;
+    }
     return this.snapshot;
   }
 
@@ -101,8 +96,23 @@ export class JuneClient extends EventEmitter {
 
   public async start(): Promise<void> {
     this.stopped = false;
-    await this.refreshToken();
+    clearTimeout(this.startupRetry);
+    this.startupRetry = undefined;
+    try {
+      await this.refreshToken();
+    } catch (error) {
+      if (!this.stopped && this.isRetryableStartupError(error)) {
+        this.scheduleStartupRetry();
+      }
+      throw error;
+    }
+    this.startupAttempt = 0;
     await this.fetchStatus().catch(error => this.warn(`Initial status failed: ${error.message}`));
+    if (this.stopped) {
+      // stop() ran while we were awaiting startup; don't install the poll it
+      // already tried to clear.
+      return;
+    }
     void this.connect().catch(error => this.warn(`WebSocket connection failed: ${error.message}`));
     this.statusPoll = setInterval(() => {
       this.fetchStatus().catch(error => this.warn(`Status poll failed: ${error.message}`));
@@ -115,11 +125,16 @@ export class JuneClient extends EventEmitter {
     clearInterval(this.statusPoll);
     clearTimeout(this.reconnect);
     this.reconnect = undefined;
+    clearTimeout(this.startupRetry);
+    this.startupRetry = undefined;
+    this.reconnectAttempt = 0;
+    this.startupAttempt = 0;
     const socket = this.ws;
     this.ws = undefined;
     socket?.close();
-    for (const resolve of this.pending.values()) {
-      resolve(null);
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.resolve(null);
     }
     this.pending.clear();
   }
@@ -155,7 +170,7 @@ export class JuneClient extends EventEmitter {
   }
 
   private async performRefreshToken(): Promise<void> {
-    const response = await fetchWithTimeout(`${this.config.baseUrl}/2/devices/register`, {
+    const { response, body } = await fetchJsonWithTimeout(`${this.config.baseUrl}/2/devices/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'User-Agent': JUNE_USER_AGENT },
       body: JSON.stringify({
@@ -171,10 +186,9 @@ export class JuneClient extends EventEmitter {
       }),
     });
     if (!response.ok) {
-      throw new Error(`Token refresh failed: ${response.status}`);
+      throw new JuneHttpError('Token refresh failed', response.status);
     }
-    const body = await response.json() as unknown;
-    const token = parseTokenResponse(body);
+    const token = parseJuneTokenResponse(body);
     this.config.accessToken = token.accessToken;
     this.config.refreshToken = token.refreshToken || this.config.refreshToken;
     this.emit('token', { accessToken: this.config.accessToken, refreshToken: this.config.refreshToken });
@@ -196,7 +210,7 @@ export class JuneClient extends EventEmitter {
   }
 
   private async performFetchStatus(autoRefresh: boolean): Promise<void> {
-    const response = await fetchWithTimeout(`${this.config.messagingUrl}/1/messaging/device/${this.config.ovenId}/status`, {
+    const { response, body } = await fetchJsonWithTimeout(`${this.config.messagingUrl}/1/messaging/device/${this.config.ovenId}/status`, {
       headers: { Authorization: `Bearer ${this.config.accessToken}` },
     });
     if (response.status === 401 && autoRefresh) {
@@ -204,9 +218,9 @@ export class JuneClient extends EventEmitter {
       return this.performFetchStatus(false);
     }
     if (!response.ok) {
-      throw new Error(`Status failed: ${response.status}`);
+      throw new JuneHttpError('Status failed', response.status);
     }
-    const statusValue = await response.json() as unknown;
+    const statusValue = body;
     if (!statusValue || typeof statusValue !== 'object' || Array.isArray(statusValue)) {
       throw new Error('Invalid June status response.');
     }
@@ -249,6 +263,7 @@ export class JuneClient extends EventEmitter {
       if (this.ws !== socket || this.stopped) {
         return;
       }
+      this.reconnectAttempt = 0;
       clearInterval(this.keepalive);
       this.sendKeepalive().catch(error => this.warn(`Keepalive failed: ${error.message}`));
       this.keepalive = setInterval(() => this.sendKeepalive().catch(error => this.warn(`Keepalive failed: ${error.message}`)), 7000);
@@ -284,10 +299,31 @@ export class JuneClient extends EventEmitter {
     if (this.reconnect) {
       return;
     }
+    const delay = calculateRetryDelay(++this.reconnectAttempt);
     this.reconnect = setTimeout(() => {
       this.reconnect = undefined;
       void this.connect().catch(error => this.warn(`WebSocket reconnect failed: ${error.message}`));
-    }, 10_000);
+    }, delay);
+    this.reconnect.unref?.();
+  }
+
+  private scheduleStartupRetry(): void {
+    if (this.stopped || this.startupRetry) {
+      return;
+    }
+    const delay = calculateRetryDelay(++this.startupAttempt);
+    this.startupRetry = setTimeout(() => {
+      this.startupRetry = undefined;
+      if (this.stopped) {
+        return;
+      }
+      void this.start().catch(error => this.warn(`June startup retry failed: ${error.message}`));
+    }, delay);
+    this.startupRetry.unref?.();
+  }
+
+  private isRetryableStartupError(error: unknown): boolean {
+    return !(error instanceof JuneHttpError) || isRetryableHttpStatus(error.status);
   }
 
   private async sendKeepalive(): Promise<void> {
@@ -307,12 +343,13 @@ export class JuneClient extends EventEmitter {
     }
     const { frame, order } = await signedFrame(this.config, code, data);
     const ack = new Promise<string | null>(resolve => {
-      this.pending.set(order, resolve);
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (this.pending.delete(order)) {
           resolve(null);
         }
       }, 6000);
+      timer.unref?.();
+      this.pending.set(order, { resolve, timer });
     });
     this.ws.send(frame);
     return ack;
@@ -327,10 +364,11 @@ export class JuneClient extends EventEmitter {
     }
     const data = frame.data || {};
     if (frame.message_code === 10020 && typeof data.request_order === 'number') {
-      const resolve = this.pending.get(data.request_order);
-      if (resolve) {
+      const pending = this.pending.get(data.request_order);
+      if (pending) {
         this.pending.delete(data.request_order);
-        resolve(typeof data.status === 'string' ? data.status : null);
+        clearTimeout(pending.timer);
+        pending.resolve(typeof data.status === 'string' ? data.status : null);
       }
       return;
     }
@@ -346,6 +384,7 @@ export class JuneClient extends EventEmitter {
       const snapshot = parseCameraFrame(data);
       if (snapshot) {
         this.snapshot = snapshot;
+        this.snapshotAt = Date.now();
       }
       return;
     }
@@ -384,21 +423,4 @@ export class JuneClient extends EventEmitter {
     this.log.warn(message);
     this.emit('warning', message);
   }
-}
-
-function parseTokenResponse(value: unknown): { accessToken: string; refreshToken?: string } {
-  if (!value || typeof value !== 'object') {
-    throw new Error('Invalid June token response.');
-  }
-  const token = (value as { token?: unknown }).token;
-  if (!token || typeof token !== 'object') {
-    throw new Error('Invalid June token response.');
-  }
-  const accessToken = (token as { access_token?: unknown }).access_token;
-  const refreshToken = (token as { refresh_token?: unknown }).refresh_token;
-  if (typeof accessToken !== 'string' || accessToken.length === 0 ||
-      (refreshToken !== undefined && typeof refreshToken !== 'string')) {
-    throw new Error('Invalid June token response.');
-  }
-  return { accessToken, refreshToken };
 }

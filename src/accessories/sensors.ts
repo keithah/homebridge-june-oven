@@ -9,7 +9,7 @@ export class JuneOccupancySensorAccessory {
 
   constructor(
     private readonly platform: JunePlatform,
-    private readonly accessory: PlatformAccessory,
+    accessory: PlatformAccessory,
     private readonly client: JuneClient,
     private readonly kind: 'ready' | 'done',
   ) {
