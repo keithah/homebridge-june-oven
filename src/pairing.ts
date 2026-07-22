@@ -18,6 +18,7 @@ import {
 
 const SRP_N = BigInt(`0x${SRP_N_HEX}`);
 const ASSOCIATION_MAX_DELAY_MS = 30_000;
+const PAIRING_SESSION_TIMEOUT_MS = 5 * 60_000;
 
 export function calculateAssociationDelay(attempt: number, random = Math.random): number {
   const exponential = Math.min(ASSOCIATION_MAX_DELAY_MS, 3_000 * 2 ** Math.max(0, attempt));
@@ -179,8 +180,7 @@ export class JunePairingSession extends EventEmitter {
   }
 
   public async begin(): Promise<PairingStatus> {
-    this.deadline = setTimeout(() => this.fail(new Error('Pairing session timed out.')), 5 * 60_000);
-    this.deadline.unref?.();
+    this.resetDeadline();
     try {
       await sodium.ready;
       this.assertOpen();
@@ -204,6 +204,12 @@ export class JunePairingSession extends EventEmitter {
       this.fail(error);
       throw error;
     }
+  }
+
+  private resetDeadline(): void {
+    clearTimeout(this.deadline);
+    this.deadline = setTimeout(() => this.fail(new Error('Pairing session timed out.')), PAIRING_SESSION_TIMEOUT_MS);
+    this.deadline.unref?.();
   }
 
   private assertOpen(): void {
@@ -347,6 +353,8 @@ export class JunePairingSession extends EventEmitter {
     if (!this.registration) {
       throw new Error('Pairing session is not initialized.');
     }
+    this.assertOpen();
+    this.resetDeadline();
     for (let attempt = 0; attempt < 20; attempt++) {
       this.assertOpen();
       await new Promise(resolve => setTimeout(resolve, calculateAssociationDelay(attempt)));

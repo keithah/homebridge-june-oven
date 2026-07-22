@@ -97,6 +97,22 @@ describe('PairingManager lifecycle', () => {
 });
 
 describe('JunePairingSession startup lifecycle', () => {
+  it('gives association polling a fresh session deadline', async () => {
+    vi.useFakeTimers();
+    const session = new JunePairingSession('session') as any;
+    session.registration = { deviceId: 'device', accessToken: 'access', password: 'password' };
+    session.deadline = setTimeout(() => session.fail(new Error('Pairing session timed out.')), 100);
+
+    const waiting = session.waitForAssociation();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(session.currentStatus().state).not.toBe('failed');
+    session.destroy();
+    const rejected = expect(waiting).rejects.toThrow('Pairing session was superseded.');
+    await vi.advanceTimersByTimeAsync(30_000);
+    await rejected;
+  });
+
   it('fails association polling immediately on permanent HTTP errors', async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0.5);

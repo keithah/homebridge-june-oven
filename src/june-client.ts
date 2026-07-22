@@ -314,6 +314,9 @@ export class JuneClient extends EventEmitter {
     const delay = calculateRetryDelay(++this.startupAttempt);
     this.startupRetry = setTimeout(() => {
       this.startupRetry = undefined;
+      if (this.stopped) {
+        return;
+      }
       void this.start().catch(error => this.warn(`June startup retry failed: ${error.message}`));
     }, delay);
     this.startupRetry.unref?.();

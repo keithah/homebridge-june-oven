@@ -68,7 +68,7 @@ describe('June event accessories', () => {
     expect(detected).toHaveLength(1);
   });
 
-  it('clears activation latch after timeout when active telemetry never arrives', async () => {
+  it('keeps activation latch during a long preheat', async () => {
     vi.useFakeTimers();
     const service = new FakeService('mode-bake');
     const services = [service];
@@ -96,7 +96,7 @@ describe('June event accessories', () => {
 
     await vi.advanceTimersByTimeAsync(90_000);
     client.emit('telemetry', { active: false });
-    expect(service.updateCharacteristic).toHaveBeenCalledWith('On', false);
+    expect(service.updateCharacteristic).not.toHaveBeenCalledWith('On', false);
   });
 
   it('allows active:false to turn off switch immediately after successful cancel', async () => {

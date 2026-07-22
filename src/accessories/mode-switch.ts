@@ -18,7 +18,6 @@ export class JuneModeSwitchAccessory {
   // not yet reported as 'active' (e.g. still preheating). While set, inactive
   // telemetry must not flip the just-enabled switch back off.
   private awaitingActiveSubtype?: string;
-  private awaitingActiveExpiry?: NodeJS.Timeout;
 
   constructor(
     private readonly platform: JunePlatform,
@@ -62,8 +61,6 @@ export class JuneModeSwitchAccessory {
   }
 
   private clearAwaitingActiveLatch(): void {
-    clearTimeout(this.awaitingActiveExpiry);
-    this.awaitingActiveExpiry = undefined;
     this.awaitingActiveSubtype = undefined;
   }
 
@@ -102,13 +99,6 @@ export class JuneModeSwitchAccessory {
     if (value) {
       this.clearAwaitingActiveLatch();
       this.awaitingActiveSubtype = subtype;
-      this.awaitingActiveExpiry = setTimeout(() => {
-        if (this.awaitingActiveSubtype === subtype) {
-          this.platform.log.warn(`Clearing activation latch for ${entry.mode.label} after 90s without 'active' telemetry.`);
-          this.clearAwaitingActiveLatch();
-        }
-      }, 90_000);
-      this.awaitingActiveExpiry.unref?.();
       this.setAllOff(subtype);
     } else {
       this.clearAwaitingActiveLatch();

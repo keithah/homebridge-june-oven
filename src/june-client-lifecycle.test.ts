@@ -108,6 +108,21 @@ describe('JuneClient lifecycle', () => {
     expect(june.connect).toHaveBeenCalledOnce();
   });
 
+  it('does not run a queued startup retry after stop', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const june = client() as any;
+    june.refreshToken = vi.fn().mockRejectedValue(new Error('network unavailable'));
+
+    await expect(june.start()).rejects.toThrow('network unavailable');
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout').mockImplementation(() => undefined);
+    june.stop();
+    await vi.advanceTimersByTimeAsync(1_000);
+    clearTimeoutSpy.mockRestore();
+
+    expect(june.refreshToken).toHaveBeenCalledOnce();
+  });
+
   it('does not retry startup for permanent HTTP authentication failures', async () => {
     vi.useFakeTimers();
     const june = client() as any;
