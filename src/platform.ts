@@ -23,7 +23,7 @@ export interface JunePlatformConfig extends PlatformConfig {
   ovens?: JuneOvenConfig[];
 }
 
-type AccessoryKind = 'thermostat' | 'preheat' | 'ready' | 'done' | 'doorbell' | 'modes' | 'probe' | 'camera';
+type AccessoryKind = 'thermostat' | 'preheat' | 'ready' | 'done' | 'doorbell' | 'modes' | 'probe';
 
 export class JunePlatform implements DynamicPlatformPlugin {
   public readonly Service: typeof Service;

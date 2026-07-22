@@ -9,7 +9,7 @@ export class JuneThermostatAccessory {
 
   constructor(
     private readonly platform: JunePlatform,
-    private readonly accessory: PlatformAccessory,
+    accessory: PlatformAccessory,
     private readonly client: JuneClient,
   ) {
     const { Service, Characteristic } = this.platform;

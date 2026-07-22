@@ -40,11 +40,10 @@
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "prepack": "npm run build",
-    "prepublishOnly": "npm run lint && npm run test && npm run build"
+    "prepublishOnly": "npm run lint && npm test"
   },
   "dependencies": {
     "@homebridge/plugin-ui-utils": "^2.1.2",
-    "libsodium": "^0.8.4",
     "libsodium-wrappers": "^0.7.15",
     "ws": "^8.18.0"
   },

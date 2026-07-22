@@ -12,7 +12,7 @@ export class JuneProbeSensorAccessory {
 
   constructor(
     private readonly platform: JunePlatform,
-    private readonly accessory: PlatformAccessory,
+    accessory: PlatformAccessory,
     private readonly client: JuneClient,
   ) {
     const { Service, Characteristic } = this.platform;
@@ -21,12 +21,12 @@ export class JuneProbeSensorAccessory {
     // 'probe-left'/'probe-right' subtyped sensors before we confirmed the oven
     // has a single probe. Otherwise a stale "Right Probe" tile lingers.
     for (const subtype of ['probe-left', 'probe-right']) {
-      const stale = this.accessory.getServiceById(Service.TemperatureSensor, subtype);
+      const stale = accessory.getServiceById(Service.TemperatureSensor, subtype);
       if (stale) {
-        this.accessory.removeService(stale);
+        accessory.removeService(stale);
       }
     }
-    this.service = this.accessory.getService(Service.TemperatureSensor) || this.accessory.addService(Service.TemperatureSensor);
+    this.service = accessory.getService(Service.TemperatureSensor) || accessory.addService(Service.TemperatureSensor);
     this.service.setCharacteristic(Characteristic.Name, cfg.name);
     this.service.getCharacteristic(Characteristic.CurrentTemperature).setProps({ minValue: -20, maxValue: 300 });
     this.client.on('telemetry', telemetry => this.update(telemetry));

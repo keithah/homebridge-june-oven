@@ -90,7 +90,7 @@
 </div>
 
 <script type="module">
-  import { loadJuneConfig, saveJuneConfig } from './june-ui.js';
+  import { loadJuneConfig, saveJuneConfig, withTimeout } from './june-ui.js';
 
   const pairButton = document.getElementById('pairButton');
   const pairCard = document.getElementById('pairCard');
@@ -100,6 +100,7 @@
   const duplicateWarning = document.getElementById('duplicateWarning');
   let currentConfig = [];
   let pollTimer;
+  let pollInFlight = false;
   let currentPairingId;
 
   const MODES = [
@@ -467,12 +468,9 @@
     renderOvens();
   }
 
-  function withTimeout(promise, ms, message) {
-    let timer;
-    const timeout = new Promise((resolve, reject) => {
-      timer = setTimeout(() => reject(new Error(message)), ms);
-    });
-    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  function stopPolling() {
+    clearTimeout(pollTimer);
+    pollTimer = undefined;
   }
 
   async function beginPairing() {
@@ -487,7 +485,7 @@
       );
       currentPairingId = status.id;
       showStatus(status);
-      pollTimer = setInterval(() => pollStatus(status.id), 2500);
+      void pollStatus(status.id);
     } catch (error) {
       pairButton.disabled = false;
       pairState.textContent = error.message || String(error);
@@ -495,6 +493,10 @@
   }
 
   async function pollStatus(id) {
+    if (pollInFlight || currentPairingId !== id) {
+      return;
+    }
+    pollInFlight = true;
     try {
       const status = await withTimeout(
         homebridge.request('/pair/status', { id }),
@@ -503,27 +505,33 @@
       );
       showStatus(status);
       if (status.state === 'paired') {
-        clearInterval(pollTimer);
         await saveOven(status.oven);
         await cancelPairing(id);
         pairButton.disabled = false;
         pairState.textContent = 'Paired. Restart Homebridge to load the accessory.';
       }
       if (status.state === 'failed') {
-        clearInterval(pollTimer);
         await cancelPairing(id);
         pairButton.disabled = false;
       }
     } catch (error) {
-      clearInterval(pollTimer);
       await cancelPairing(id);
       pairButton.disabled = false;
       pairState.textContent = error.message || String(error);
+    } finally {
+      pollInFlight = false;
+      if (currentPairingId === id) {
+        pollTimer = setTimeout(() => {
+          pollTimer = undefined;
+          void pollStatus(id);
+        }, 2500);
+      }
     }
   }
 
   async function cancelPairing(id = currentPairingId) {
     if (!id) return;
+    stopPolling();
     currentPairingId = undefined;
     try {
       await withTimeout(homebridge.request('/pair/cancel', { id }), 5000, 'Pairing cancellation timed out.');

@@ -8,7 +8,6 @@ import {
 } from './settings';
 
 export const MC_PREHEAT = 11002;
-export const MC_TEMP = 11005;
 export const MC_CANCEL = 11004;
 export const MC_KEEPALIVE = 11011;
 
@@ -97,6 +96,22 @@ export interface JuneFrame {
   target: { id: string };
 }
 
+export function parseJuneTokenResponse(value: unknown): { accessToken: string; refreshToken?: string } {
+  if (!value || typeof value !== 'object') {
+    throw new Error('Invalid June token response.');
+  }
+  const token = (value as { token?: unknown }).token;
+  if (!token || typeof token !== 'object') {
+    throw new Error('Invalid June token response.');
+  }
+  const accessToken = (token as { access_token?: unknown }).access_token;
+  const refreshToken = (token as { refresh_token?: unknown }).refresh_token;
+  if (typeof accessToken !== 'string' || accessToken.length === 0) {
+    throw new Error('Invalid June token response.');
+  }
+  return { accessToken, refreshToken: typeof refreshToken === 'string' ? refreshToken : undefined };
+}
+
 let lastOrder = 0;
 
 export function normalizeOvenConfig(config: JuneOvenConfig): NormalizedJuneConfig {
@@ -123,7 +138,12 @@ export function normalizeOvenConfig(config: JuneOvenConfig): NormalizedJuneConfi
     },
     modes: (config.modes ?? [])
       .filter(m => m && typeof m.primitiveType === 'string' && m.primitiveType.length > 0)
-      .map(m => ({ label: m.label || m.primitiveType, primitiveType: m.primitiveType, tempF: m.tempF ?? 350 })),
+      .map(m => {
+        const tempF = typeof m.tempF === 'number' && Number.isFinite(m.tempF) && m.tempF >= 100 && m.tempF <= 550
+          ? m.tempF
+          : 350;
+        return { label: m.label || m.primitiveType, primitiveType: m.primitiveType, tempF };
+      }),
     probeSensors: {
       enabled: config.probeSensors?.enabled ?? false,
       name: config.probeSensors?.name || 'Food Probe',
@@ -138,10 +158,6 @@ export function normalizeOvenConfig(config: JuneOvenConfig): NormalizedJuneConfi
 
 export function fahrenheitToMilliC(fahrenheit: number): number {
   return Math.round((fahrenheit - 32) * 5 / 9 * 1000);
-}
-
-export function celsiusToMilliC(celsius: number): number {
-  return Math.round(celsius * 1000);
 }
 
 export function milliCToFahrenheit(milliC: number): number {

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { JuneHttpError } from './http';
 
 vi.mock('ws', async () => {
   const { EventEmitter } = await import('node:events');
@@ -28,7 +29,7 @@ vi.mock('ws', async () => {
   return { default: FakeWebSocket };
 });
 
-import { JuneClient } from './june-client';
+import { calculateRetryDelay, JuneClient } from './june-client';
 
 function sockets(): any[] {
   return (globalThis as any).__juneTestSockets;
@@ -51,6 +52,12 @@ afterEach(() => {
 });
 
 describe('JuneClient lifecycle', () => {
+  it('calculates bounded jittered retry delays', () => {
+    expect(calculateRetryDelay(1, () => 0)).toBe(500);
+    expect(calculateRetryDelay(3, () => 0.5)).toBe(4_000);
+    expect(calculateRetryDelay(20, () => 1)).toBe(120_000);
+  });
+
   it('shares one socket while a connection is in progress', () => {
     const june = client();
 
@@ -74,14 +81,42 @@ describe('JuneClient lifecycle', () => {
 
   it('schedules a reconnect when connection establishment errors', async () => {
     vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
     const june = client();
     const connection = (june as any).connect();
 
     sockets()[0].emit('error', new Error('handshake failed'));
     await expect(connection).rejects.toThrow('handshake failed');
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTimeAsync(1_000);
 
     expect(sockets()).toHaveLength(2);
+  });
+
+  it('retries startup after a transient token refresh failure', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const june = client() as any;
+    june.refreshToken = vi.fn()
+      .mockRejectedValueOnce(new Error('network unavailable'))
+      .mockResolvedValue(undefined);
+    june.fetchStatus = vi.fn().mockResolvedValue(undefined);
+    june.connect = vi.fn().mockResolvedValue(undefined);
+
+    await expect(june.start()).rejects.toThrow('network unavailable');
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(june.refreshToken).toHaveBeenCalledTimes(2));
+    expect(june.connect).toHaveBeenCalledOnce();
+  });
+
+  it('does not retry startup for permanent HTTP authentication failures', async () => {
+    vi.useFakeTimers();
+    const june = client() as any;
+    june.refreshToken = vi.fn().mockRejectedValue(new JuneHttpError('Token refresh failed', 401));
+
+    await expect(june.start()).rejects.toThrow('Token refresh failed: 401');
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(june.refreshToken).toHaveBeenCalledOnce();
   });
 
   it('shares one token refresh between concurrent callers', async () => {
@@ -115,5 +150,18 @@ describe('JuneClient lifecycle', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(['not', 'a', 'status']))));
 
     await expect(client().fetchStatus()).rejects.toThrow(/status response/i);
+  });
+
+  it('clears command acknowledgement timers when an ack arrives', () => {
+    vi.useFakeTimers();
+    const june = client() as any;
+    const resolve = vi.fn();
+    const timer = setTimeout(() => resolve(null), 6_000);
+    june.pending.set(42, { resolve, timer });
+
+    june.handleMessage(JSON.stringify({ message_code: 10020, data: { request_order: 42, status: 'success' } }));
+
+    expect(resolve).toHaveBeenCalledWith('success');
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

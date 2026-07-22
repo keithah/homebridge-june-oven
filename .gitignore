@@ -2,6 +2,7 @@ re/
 node_modules/
 dist/
 coverage/
+*.tsbuildinfo
 *.tgz
 *.log
 .DS_Store

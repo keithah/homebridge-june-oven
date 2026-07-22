@@ -2,7 +2,8 @@ import { createHash, randomBytes, randomInt } from 'crypto';
 import { EventEmitter } from 'events';
 import sodium from 'libsodium-wrappers';
 import WebSocket from 'ws';
-import { fetchWithTimeout } from './http';
+import { fetchJsonWithTimeout, isRetryableHttpStatus } from './http';
+import { parseJuneTokenResponse } from './protocol';
 import {
   JUNE_API_URL,
   JUNE_APP_VERSION,
@@ -16,6 +17,12 @@ import {
 } from './settings';
 
 const SRP_N = BigInt(`0x${SRP_N_HEX}`);
+const ASSOCIATION_MAX_DELAY_MS = 30_000;
+
+export function calculateAssociationDelay(attempt: number, random = Math.random): number {
+  const exponential = Math.min(ASSOCIATION_MAX_DELAY_MS, 3_000 * 2 ** Math.max(0, attempt));
+  return Math.min(ASSOCIATION_MAX_DELAY_MS, Math.round(exponential * (0.75 + random() * 0.5)));
+}
 const PAD_LEN = (SRP_N.toString(2).length + 7) >> 3;
 const DAMM = [
   [0, 3, 1, 7, 5, 9, 8, 6, 4, 2],
@@ -160,8 +167,9 @@ export class JunePairingSession extends EventEmitter {
   private signingPublic?: Uint8Array;
   private encryptionPublic?: Uint8Array;
   private deadline?: NodeJS.Timeout;
+  private closed = false;
 
-  constructor(private readonly id: string, private readonly deviceName = 'Homebridge June') {
+  constructor(id: string, private readonly deviceName = 'Homebridge June') {
     super();
     this.status = { id, state: 'starting' };
   }
@@ -175,10 +183,10 @@ export class JunePairingSession extends EventEmitter {
     this.deadline.unref?.();
     try {
       await sodium.ready;
-      this.registration = await this.registerDevice();
-      if (!this.registration) {
-        throw new Error('Pairing session was destroyed during device registration.');
-      }
+      this.assertOpen();
+      const registration = await this.registerDevice();
+      this.assertOpen();
+      this.registration = registration;
       const signingKey = sodium.crypto_sign_keypair();
       const boxKey = sodium.crypto_box_keypair();
       this.signingSeedHex = Buffer.from(signingKey.privateKey.slice(0, 32)).toString('hex');
@@ -186,9 +194,7 @@ export class JunePairingSession extends EventEmitter {
       this.encryptionPublic = boxKey.publicKey;
       this.openSocket(this.registration.accessToken);
       const pin = await this.requestPairingCode(this.registration.accessToken);
-      if (!this.registration) {
-        throw new Error('Pairing session was destroyed during pairing code request.');
-      }
+      this.assertOpen();
       this.serverCode = pin.code;
       this.status.shownCode = buildShownCode(pin.code);
       this.srp = new SrpServer(this.status.shownCode);
@@ -200,7 +206,14 @@ export class JunePairingSession extends EventEmitter {
     }
   }
 
+  private assertOpen(): void {
+    if (this.closed || !this.deadline) {
+      throw new Error('Pairing session was superseded.');
+    }
+  }
+
   public close(): void {
+    this.closed = true;
     clearTimeout(this.deadline);
     this.deadline = undefined;
     this.ws?.close();
@@ -228,7 +241,7 @@ export class JunePairingSession extends EventEmitter {
   private async registerDevice(): Promise<DeviceRegistration> {
     const deviceId = randomBytes(16).toString('hex');
     const password = randomBytes(16).toString('hex');
-    const response = await fetchWithTimeout(`${JUNE_API_URL}/2/devices/register`, {
+    const { response, body } = await fetchJsonWithTimeout(`${JUNE_API_URL}/2/devices/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'User-Agent': JUNE_USER_AGENT },
       body: JSON.stringify({
@@ -246,20 +259,18 @@ export class JunePairingSession extends EventEmitter {
     if (!response.ok) {
       throw new Error(`Device registration failed: ${response.status}`);
     }
-    const body = await response.json() as unknown;
-    const token = parsePairingToken(body);
+    const token = parseJuneTokenResponse(body);
     return { deviceId, password, accessToken: token.accessToken, refreshToken: token.refreshToken || '' };
   }
 
   private async requestPairingCode(accessToken: string): Promise<{ code: string }> {
-    const response = await fetchWithTimeout(`${JUNE_API_URL}/2/devices/pairing`, {
+    const { response, body } = await fetchJsonWithTimeout(`${JUNE_API_URL}/2/devices/pairing`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${accessToken}`, 'User-Agent': JUNE_USER_AGENT },
     });
     if (!response.ok) {
       throw new Error(`Pairing code request failed: ${response.status}`);
     }
-    const body = await response.json() as unknown;
     if (!body || typeof body !== 'object' ||
         typeof (body as { pin?: { code?: unknown } }).pin?.code !== 'string') {
       throw new Error('Invalid June pairing-code response.');
@@ -310,7 +321,7 @@ export class JunePairingSession extends EventEmitter {
     };
     const nonce = randomBytes(24);
     const encrypted = sodium.crypto_secretbox_easy(Buffer.from(JSON.stringify(companionInfo)), nonce, key);
-    const response = await fetchWithTimeout(`${JUNE_API_URL}/2/devices/pairing/${this.serverCode}/companion`, {
+    const { response } = await fetchJsonWithTimeout(`${JUNE_API_URL}/2/devices/pairing/${this.serverCode}/companion`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.registration.accessToken}`,
@@ -337,14 +348,18 @@ export class JunePairingSession extends EventEmitter {
       throw new Error('Pairing session is not initialized.');
     }
     for (let attempt = 0; attempt < 20; attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      const response = await fetchWithTimeout(`${JUNE_API_URL}/2/devices/${this.registration.deviceId}/associated`, {
+      this.assertOpen();
+      await new Promise(resolve => setTimeout(resolve, calculateAssociationDelay(attempt)));
+      this.assertOpen();
+      const { response, body: bodyValue } = await fetchJsonWithTimeout(`${JUNE_API_URL}/2/devices/${this.registration.deviceId}/associated`, {
         headers: { Authorization: `Bearer ${this.registration.accessToken}`, 'User-Agent': JUNE_USER_AGENT },
       });
       if (!response.ok) {
+        if (!isRetryableHttpStatus(response.status)) {
+          throw new Error(`June association request failed: ${response.status}`);
+        }
         continue;
       }
-      const bodyValue = await response.json() as unknown;
       if (!bodyValue || typeof bodyValue !== 'object' || Array.isArray(bodyValue)) {
         throw new Error('Invalid June association response.');
       }
@@ -384,6 +399,9 @@ export class JunePairingSession extends EventEmitter {
   }
 
   private fail(error: unknown): void {
+    if (this.closed) {
+      return;
+    }
     this.setState('failed', error instanceof Error ? error.message : String(error));
     this.close();
   }
@@ -395,6 +413,7 @@ export class PairingManager {
   private readonly sessionFactory: (id: string, deviceName?: string) => JunePairingSession;
   private readonly terminalTtlMs: number;
   private readonly maxActiveSessions: number;
+  private readonly statusListeners = new Map<string, (status: PairingStatus) => void>();
 
   constructor(options: {
     sessionFactory?: (id: string, deviceName?: string) => JunePairingSession;
@@ -425,11 +444,16 @@ export class PairingManager {
     const id = randomBytes(8).toString('hex');
     const session = this.sessionFactory(id, deviceName);
     this.sessions.set(id, session);
-    session.on('status', status => {
+    const statusListener = (status: PairingStatus) => {
+      if (this.sessions.get(id) !== session) {
+        return;
+      }
       if (isTerminal(status.state)) {
         this.scheduleEviction(id, session);
       }
-    });
+    };
+    this.statusListeners.set(id, statusListener);
+    session.on('status', statusListener);
     try {
       const status = await session.begin();
       if (isTerminal(status.state)) {
@@ -467,13 +491,18 @@ export class PairingManager {
   }
 
   private remove(id: string, session: JunePairingSession): void {
-    if (this.sessions.get(id) !== session) {
-      return;
-    }
     const timer = this.evictionTimers.get(id);
     if (timer) {
       clearTimeout(timer);
       this.evictionTimers.delete(id);
+    }
+    if (this.sessions.get(id) !== session) {
+      return;
+    }
+    const listener = this.statusListeners.get(id);
+    if (listener) {
+      session.removeListener('status', listener);
+      this.statusListeners.delete(id);
     }
     this.sessions.delete(id);
     session.destroy();
@@ -482,21 +511,6 @@ export class PairingManager {
 
 function isTerminal(state: PairingState): boolean {
   return state === 'paired' || state === 'failed';
-}
-
-function parsePairingToken(value: unknown): { accessToken: string; refreshToken?: string } {
-  const token = value && typeof value === 'object' ? (value as { token?: unknown }).token : undefined;
-  if (!token || typeof token !== 'object') {
-    throw new Error('Invalid June registration response.');
-  }
-  const accessToken = (token as { access_token?: unknown }).access_token;
-  const refreshToken = (token as { refresh_token?: unknown }).refresh_token;
-  if (typeof accessToken !== 'string' || accessToken.length === 0) {
-    throw new Error('Invalid June registration response.');
-  }
-  // Tolerate a missing/null/non-string refresh_token rather than rejecting an
-  // otherwise-valid registration.
-  return { accessToken, refreshToken: typeof refreshToken === 'string' ? refreshToken : undefined };
 }
 
 function findLongBase64(input: string): string | undefined {

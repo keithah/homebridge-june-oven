@@ -145,6 +145,31 @@ describe('JuneCameraSource session lifecycle', () => {
     expect(controller.forceStopStreamingSession).toHaveBeenCalledWith('session');
   });
 
+  it('settles a pending start when the session stops before ffmpeg spawns', async () => {
+    const socket = new FakeSocket();
+    const process = new FakeProcess();
+    vi.mocked(createSocket).mockReturnValue(socket as never);
+    vi.mocked(spawn).mockReturnValue(process as never);
+    const { source } = harness();
+    await prepare(source);
+    const startCallback = vi.fn();
+
+    source.handleStreamRequest({
+      type: 0,
+      sessionID: 'session',
+      video: { fps: 2, width: 640, height: 480, max_bit_rate: 300, pt: 99 },
+    } as never, startCallback);
+    source.handleStreamRequest({ type: 1, sessionID: 'session' } as never, vi.fn());
+
+    expect(startCallback).toHaveBeenCalledOnce();
+    expect(startCallback.mock.calls[0][0]).toEqual(expect.objectContaining({
+      message: 'Streaming session stopped before ffmpeg started',
+    }));
+
+    process.emit('spawn');
+    expect(startCallback).toHaveBeenCalledOnce();
+  });
+
   it('disables automatic redirects when fetching a camera frame', async () => {
     const socket = new FakeSocket();
     vi.mocked(createSocket).mockReturnValue(socket as never);
@@ -155,6 +180,25 @@ describe('JuneCameraSource session lifecycle', () => {
     await source.handleSnapshotRequest({} as never, vi.fn());
 
     expect(fetch).toHaveBeenCalledWith('https://api.junelife.com/media/image.jpe', expect.objectContaining({ redirect: 'error' }));
+  });
+
+  it('shares one in-flight frame fetch across concurrent snapshot requests', async () => {
+    let release!: (response: unknown) => void;
+    const response = new Promise(resolve => { release = resolve; });
+    const fetch = vi.fn(() => response);
+    vi.stubGlobal('fetch', fetch);
+    const { source } = harness();
+    const first = vi.fn();
+    const second = vi.fn();
+
+    const firstRequest = source.handleSnapshotRequest({} as never, first);
+    const secondRequest = source.handleSnapshotRequest({} as never, second);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    release({ ok: true, body: null });
+    await Promise.all([firstRequest, secondRequest]);
+
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
   });
 
   it('cleans up all prepared sessions during platform shutdown', async () => {
