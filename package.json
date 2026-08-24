@@ -39,6 +39,8 @@
     "watch": "tsc --watch",
     "lint": "tsc --noEmit",
     "test": "vitest run",
+    "local-server": "node dist/local-server/server.js",
+    "local-server:dev": "tsc --watch & JUNE_LOCAL_PORT=8080 node --watch dist/local-server/server.js",
     "prepack": "npm run build",
     "prepublishOnly": "npm run lint && npm run test && npm run build"
   },
