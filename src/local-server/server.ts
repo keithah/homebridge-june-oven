@@ -68,13 +68,29 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, { success: true });
       return;
     }
+    const VALID_PIN = process.env.JUNE_MOCK_PIN || '75893786';
+    const VALID_PINS = new Set([VALID_PIN, '357155', '123456', '000000']);
     if (req.method === 'GET' && url.pathname === '/2/devices/pairing') {
-      json(res, 200, { success: true, pairings: [] });
+      // yf.c RequestPinResponse
+      json(res, 200, { success: true, pin: { code: VALID_PIN, expires: 300, request_id: `local-${Date.now()}` } });
       return;
     }
+    // oven or companion checking/companion claiming via pin — accept valid pin, else 400
+    if (/^\/2\/devices\/pairing\/[^/]+\/companion$/.test(url.pathname)) {
+      const pin = url.pathname.split('/')[4];
+      console.log('[pairing] ' + req.method + ' pin=' + pin + ' body=' + body.slice(0, 500));
+      if (VALID_PINS.has(pin)) {
+        // mark companion associated (extract companionId from body if present, else from auth)
+        json(res, 200, { success: true });
+        return;
+      } else {
+        json(res, 400, { success: false, error: 'invalid pin (mock expects ' + VALID_PIN + ')' });
+        return;
+      }
+    }
     if (req.method === 'GET' && /^\/2\/devices\/[^/]+\/associated$/.test(url.pathname)) {
-      // return associated ovens
-      json(res, 200, { success: true, devices: [{ oven_id: DEFAULT_OVEN_ID, id: DEFAULT_OVEN_ID }] });
+      // return associated ovens — mock claims paired
+      json(res, 200, { success: true, devices: [{ oven_id: DEFAULT_OVEN_ID, id: DEFAULT_OVEN_ID, name: 'June Oven (local)' }] });
       return;
     }
     if (req.method === 'GET' && /^\/2\/devices\/[^/]+\/info$/.test(url.pathname)) {
