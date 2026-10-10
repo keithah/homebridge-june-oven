@@ -1,8 +1,59 @@
 import { EventEmitter } from 'events';
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const sockets = vi.hoisted(() => [] as Array<{ url: string; options: Record<string, unknown> }>);
+vi.mock('ws', async () => {
+  const { EventEmitter: Emitter } = await import('node:events');
+  class FakeWebSocket extends Emitter {
+    constructor(public readonly url: string, public readonly options: Record<string, unknown>) {
+      super();
+      sockets.push(this);
+    }
+
+    close(): void {
+      this.emit('close');
+    }
+  }
+  return { default: FakeWebSocket };
+});
+vi.mock('undici', () => ({
+  Agent: class {
+    constructor(public readonly options: unknown) {}
+  },
+  fetch: (input: string, init: unknown) => globalThis.fetch(input, init as RequestInit),
+}));
+
+import { resolveServerSettings } from './local-server';
 import { buildShownCode, calculateAssociationDelay, damm, JunePairingSession, modPow, PairingManager, SrpServer } from './pairing';
 
-afterEach(() => vi.useRealTimers());
+const TEST_CA = readFileSync('src/fixtures/test-ca.crt', 'utf8').trim();
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  sockets.length = 0;
+});
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status });
+}
+
+function pairingServer(status: () => Response = () => json({ server: 'june-local' })) {
+  return vi.fn(async (url: string, _init?: RequestInit) => {
+    if (url.endsWith('/local/status')) {
+      return status();
+    }
+    if (url.endsWith('/2/devices/register')) {
+      return json({ token: { access_token: 'access', refresh_token: 'refresh' } });
+    }
+    if (url.endsWith('/2/devices/pairing')) {
+      return json({ pin: { code: '46605' } });
+    }
+    return new Response(null, { status: 404 });
+  });
+}
 
 describe('Damm PIN construction', () => {
   it('appends a check digit that validates to zero', () => {
@@ -161,6 +212,125 @@ describe('JunePairingSession startup lifecycle', () => {
     finishCodeRequest({ code: '46605' });
 
     await expect(beginning).rejects.toThrow('Pairing session was superseded.');
+  });
+});
+
+describe('pairing through a server', () => {
+  it('keeps pairing through June cloud when no endpoint is given', async () => {
+    const fetch = pairingServer();
+    vi.stubGlobal('fetch', fetch);
+    const manager = new PairingManager();
+
+    const status = await manager.begin('Homebridge June');
+
+    expect(status.state).toBe('waiting-for-oven');
+    expect(fetch.mock.calls.map(call => call[0])).toEqual([
+      'https://api.junelife.com/2/devices/register',
+      'https://api.junelife.com/2/devices/pairing',
+    ]);
+    expect(fetch.mock.calls.every(call => !('dispatcher' in (call[1] ?? {})))).toBe(true);
+    expect(sockets[0].url).toBe('wss://messaging.junelife.com/1/messaging/websocket/companion');
+    expect(Object.keys(sockets[0].options).sort()).toEqual(['headers', 'perMessageDeflate']);
+    manager.cancel(status.id);
+  });
+
+  it('checks a june-local server, then pairs through it with its CA', async () => {
+    const fetch = pairingServer();
+    vi.stubGlobal('fetch', fetch);
+    const manager = new PairingManager();
+
+    const status = await manager.begin('Homebridge June', { endpoint: 'june-oven.local', caCert: TEST_CA });
+
+    expect(status.state).toBe('waiting-for-oven');
+    expect(fetch.mock.calls.map(call => call[0])).toEqual([
+      'https://june-oven.local/local/status',
+      'https://june-oven.local/2/devices/register',
+      'https://june-oven.local/2/devices/pairing',
+    ]);
+    for (const call of fetch.mock.calls) {
+      expect((call[1] as unknown as { dispatcher: { options: unknown } }).dispatcher.options)
+        .toEqual({ connect: { ca: TEST_CA, rejectUnauthorized: true } });
+    }
+    expect(sockets[0].url).toBe('wss://june-oven.local/1/messaging/websocket/companion');
+    expect(sockets[0].options).toMatchObject({ ca: TEST_CA, rejectUnauthorized: true, perMessageDeflate: false });
+    manager.cancel(status.id);
+  });
+
+  it('pairs through the plain HTTP listener without TLS settings', async () => {
+    const fetch = pairingServer();
+    vi.stubGlobal('fetch', fetch);
+    const manager = new PairingManager();
+
+    const status = await manager.begin('Homebridge June', { endpoint: 'http://192.168.1.75', caCert: TEST_CA, verifySsl: false });
+
+    expect(fetch.mock.calls[0][0]).toBe('http://192.168.1.75:8080/local/status');
+    expect(sockets[0].url).toBe('ws://192.168.1.75:8080/1/messaging/websocket/companion');
+    expect(Object.keys(sockets[0].options).sort()).toEqual(['headers', 'perMessageDeflate']);
+    manager.cancel(status.id);
+  });
+
+  it('stops before registering when the endpoint is not a june-local server', async () => {
+    const fetch = pairingServer(() => json({ server: 'something-else' }));
+    vi.stubGlobal('fetch', fetch);
+
+    await expect(new PairingManager().begin('Homebridge June', { endpoint: '192.168.1.75' }))
+      .rejects.toMatchObject({ kind: 'not-local-server' });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(sockets).toHaveLength(0);
+  });
+
+  it('reports a server certificate it cannot trust', async () => {
+    const cause = Object.assign(new Error('self-signed certificate in certificate chain'), { code: 'SELF_SIGNED_CERT_IN_CHAIN' });
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed', { cause }); }));
+
+    await expect(new PairingManager().begin('Homebridge June', { endpoint: '192.168.1.75' }))
+      .rejects.toMatchObject({ kind: 'certificate', message: expect.stringMatching(/not trusted/) });
+  });
+
+  it('reports a server it cannot reach', async () => {
+    const cause = Object.assign(new Error('connect EHOSTUNREACH 192.168.1.75:443'), { code: 'EHOSTUNREACH' });
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed', { cause }); }));
+
+    await expect(new PairingManager().begin('Homebridge June', { endpoint: '192.168.1.75' }))
+      .rejects.toMatchObject({ kind: 'cannot-connect', message: expect.stringMatching(/Could not connect/) });
+  });
+
+  it('rejects invalid server settings without replacing an active session', async () => {
+    const active = fakeSession({ id: 'active', state: 'waiting-for-oven' });
+    const factory = vi.fn(() => active as never);
+    const manager = new PairingManager({ sessionFactory: factory });
+    await manager.begin();
+
+    await expect(manager.begin('Homebridge June', { endpoint: 'ftp://oven' })).rejects.toMatchObject({ kind: 'invalid-endpoint' });
+    await expect(manager.begin('Homebridge June', { endpoint: 'oven.local', caCert: 'not a certificate' }))
+      .rejects.toMatchObject({ kind: 'invalid-ca' });
+
+    expect(factory).toHaveBeenCalledOnce();
+    expect(active.destroy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['saves the june-local settings with the paired oven', { endpoint: '192.168.1.75', caCert: TEST_CA, verifySsl: false },
+      'https://192.168.1.75', { endpoint: 'https://192.168.1.75', caCert: TEST_CA, verifySsl: false }],
+    ['adds no server settings to a June cloud pairing', {}, 'https://api.junelife.com', {}],
+  ])('%s', async (_label, settings, apiUrl, expected) => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const fetch = vi.fn(async (_url: string, _init?: RequestInit) => json({ devices: [{ oven_id: 'oven-1', name: 'Kitchen' }] }));
+    vi.stubGlobal('fetch', fetch);
+    const session = new JunePairingSession('session', 'Homebridge June', resolveServerSettings(settings)) as any;
+    session.registration = { deviceId: 'device', accessToken: 'access', password: 'password', refreshToken: 'refresh' };
+    session.deadline = setTimeout(() => undefined, 300_000);
+
+    const waiting = session.waitForAssociation();
+    await vi.advanceTimersByTimeAsync(3_000);
+    await waiting;
+
+    const oven = session.currentStatus().oven;
+    expect(fetch.mock.calls[0][0]).toBe(`${apiUrl}/2/devices/device/associated`);
+    expect(oven).toMatchObject({ ovenId: 'oven-1', name: 'Kitchen', ...expected });
+    expect(Object.keys(oven).filter(key => ['endpoint', 'caCert', 'verifySsl'].includes(key)))
+      .toEqual(Object.keys(expected));
   });
 });
 

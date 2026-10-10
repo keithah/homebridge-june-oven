@@ -59,7 +59,13 @@ export class JunePlatform implements DynamicPlatformPlugin {
         this.log.warn(`Skipping ${oven.name || 'June'} because it is missing pairing identity fields.`);
         continue;
       }
-      const client = new JuneClient(oven, this.log);
+      let client: JuneClient;
+      try {
+        client = new JuneClient(oven, this.log);
+      } catch (error) {
+        this.log.error(`Skipping ${oven.name || 'June'}: ${(error as Error).message}`);
+        continue;
+      }
       this.clients.push(client);
       client.on('token', token => {
         oven.accessToken = token.accessToken;

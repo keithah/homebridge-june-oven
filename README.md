@@ -11,7 +11,7 @@
 
 A [Homebridge](https://homebridge.io) plugin that brings [June](https://juneoven.com) ovens into Apple HomeKit. Pair an oven directly from the Homebridge Config UI — no June account login, no extracted credentials — and control it from the Home app or with Siri.
 
-> This is an independent, community-built plugin. It is not affiliated with or endorsed by June Life, Inc. It talks to June's cloud API using the same protocol the official June app uses.
+> This is an independent, community-built plugin. It is not affiliated with or endorsed by June Life, Inc. It talks to June's cloud API using the same protocol the official June app uses, or optionally to a [Project July](#project-july-local-server) local server running on the oven itself.
 
 ## Features
 
@@ -24,7 +24,7 @@ A [Homebridge](https://homebridge.io) plugin that brings [June](https://juneoven
 - **Optional interior camera** — shows the oven's interior camera (a still refreshed ~1×/sec while cooking, which is the oven's native feed). Snapshots work out of the box; tap-to-view live streaming uses system `ffmpeg` if present. Enable the camera *and* the doorbell together to get a **Video Doorbell**, so the "cook done" notification arrives with a photo of your food. Off by default. Because HomeKit only renders cameras on *external* accessories, the camera / video-doorbell is published as a standalone accessory: after enabling it, add it in the Home app with **Add Accessory → More options…** using the same Homebridge PIN.
 - **In-plugin pairing** — pair from the Config UI with an 8-digit code, the same flow the June app uses. No account credentials are ever entered into or stored by the plugin.
 - **Editable per-oven settings in the Config UI** — rename accessories, toggle sensors, set default cook mode/temperature (in whichever unit you prefer), and check an oven's live connection status, all without hand-editing `config.json`.
-- **Automatic token refresh** and a persistent, signed WebSocket connection to June's messaging service for live status and commands.
+- **Automatic token refresh** and a persistent, signed WebSocket connection to June's messaging service (or the oven's Project July local server) for live status and commands.
 - **Multi-oven support.**
 
 ## Not exposed (and why)
@@ -60,7 +60,7 @@ The Homebridge Config UI plugin screen also shows beta releases if you enable "S
 
 ## Pair an oven
 
-This plugin pairs directly with the oven — you don't need the June phone app.
+This plugin pairs directly with the oven — you don't need the June phone app. To pair through a [Project July local server](#project-july-local-server) instead of June's cloud, enter the oven's address in the Config UI first.
 
 1. Open the plugin's settings in the Homebridge Config UI.
 2. On the oven's touchscreen, swipe left twice from the home screen and select **Connect**. If the oven already shows a list of connected devices instead of a code, tap **+** to add a new device.
@@ -74,9 +74,21 @@ The pairing identity (companion device password, access token, refresh token, Ed
 
 Removing an oven from the Config UI only deletes it from Homebridge's config — it does **not** revoke the companion authorization on June's servers (there's no documented API for that). To fully disconnect a companion, also remove it from the oven's own connected-devices screen.
 
+## Project July local server
+
+June's cloud service shut down on 22 September 2026. [Project July](https://project-july.org) is a community project that keeps June ovens working without it: its **june-local** server runs on the oven itself and serves the same REST and WebSocket routes as June's cloud from a single address, over HTTPS on port 443 with a per-install CA certificate, and over plain HTTP on port 8080. Install it with the [Project July setup guide](https://project-july.org/setup/), then:
+
+1. Open the plugin's settings in the Homebridge Config UI.
+2. Expand **Project July local server (optional)** above **Pair a new June oven**.
+3. Enter the oven's address: a hostname or IP address such as `192.168.1.75` or `june-oven.local`, with an optional port. HTTPS is assumed; start with `http://` to use the plain port-8080 listener.
+4. Paste your Project July `ca.crt` into **CA certificate** so Homebridge trusts the oven's certificate. When set, it is the only CA trusted for that oven. Leave it blank to use the system certificate store, and only turn off **Verify TLS certificate** if the certificate can't be trusted any other way (commands stay signed, but the connection could be intercepted on your network).
+5. Pair as described in [Pair an oven](#pair-an-oven). Before pairing, the plugin checks `/local/status` at that address and reports whether it couldn't connect, the certificate isn't trusted, or the address isn't a june-local server.
+
+The address and TLS settings are saved with the paired oven as `endpoint`, `caCert` and `verifySsl`, and can be changed later on the oven's card in the Config UI (restart Homebridge afterwards). Camera frames are then fetched from the oven's server too. Ovens without an `endpoint` keep using June's cloud.
+
 ## Configuration
 
-The Config UI is the primary way to add, pair, and edit ovens; you shouldn't need to hand-edit `config.json`. Each paired oven's card in the Config UI lets you change its name, preheat switch name, ready/done sensors, default cook mode, default preheat temperature (shown in whichever unit you pick), and temperature display units, and includes a **Check status** button that queries June's cloud for the oven's current connection/cook state. For reference, a paired platform block looks like:
+The Config UI is the primary way to add, pair, and edit ovens; you shouldn't need to hand-edit `config.json`. Each paired oven's card in the Config UI lets you change its name, preheat switch name, ready/done sensors, default cook mode, default preheat temperature (shown in whichever unit you pick), and temperature display units, and includes a **Check status** button that queries June's cloud (or the oven's Project July local server) for the oven's current connection/cook state. For reference, a paired platform block looks like:
 
 ```json
 {
@@ -124,7 +136,7 @@ June's oven doesn't support changing the target temperature of a cook that's alr
 
 ## Troubleshooting
 
-- **Pairing hangs or fails** — make sure the oven and the Homebridge host both have working internet access; pairing goes through June's cloud, not local network. Double-check the 8-digit code before it expires and try again.
+- **Pairing hangs or fails** — without a local server address, pairing goes through June's cloud, so the oven and the Homebridge host both need working internet access. With a [Project July local server](#project-july-local-server), the Homebridge host needs to reach the oven's address on your network instead. Double-check the 8-digit code before it expires and try again.
 - **Accessory doesn't show up after pairing** — you need to restart Homebridge once after a successful pair for the new accessory to register.
 - **Temperature looks off** — check `tempUnit` for that oven matches what you expect (`F` or `C`); the oven itself always reports in Celsius internally.
 

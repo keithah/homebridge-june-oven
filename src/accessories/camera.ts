@@ -167,7 +167,9 @@ export class JuneCameraSource implements CameraStreamingDelegate {
     if (this.frameFetch?.url === url) {
       return this.frameFetch.promise;
     }
-    const promise = fetchBufferWithTimeout(url, { redirect: 'error' }, 5000, MAX_CAMERA_FRAME_BYTES)
+    // A local endpoint's frames come from the configured server, so they use
+    // its TLS settings; June's cloud frames use the system certificate store.
+    const promise = fetchBufferWithTimeout(url, { redirect: 'error', tls: this.client.tls }, 5000, MAX_CAMERA_FRAME_BYTES)
       .then(({ response, body }) => {
         if (!response.ok) {
           throw new Error(`camera frame fetch ${response.status}`);

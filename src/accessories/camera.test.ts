@@ -5,6 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('dgram', () => ({ createSocket: vi.fn() }));
 vi.mock('child_process', () => ({ spawn: vi.fn() }));
+vi.mock('undici', () => ({
+  Agent: class {
+    constructor(public readonly options: unknown) {}
+  },
+  fetch: (input: string, init: unknown) => globalThis.fetch(input, init as RequestInit),
+}));
 
 import { JuneCameraSource } from './camera';
 
@@ -31,7 +37,10 @@ class FakeProcess extends EventEmitter {
   public readonly stderr = new EventEmitter();
 }
 
-function harness(snapshot: { url: string } | undefined = { url: 'https://api.junelife.com/media/image.jpe' }) {
+function harness(
+  snapshot: { url: string } | undefined = { url: 'https://api.junelife.com/media/image.jpe' },
+  tls?: { ca?: string; rejectUnauthorized: boolean },
+) {
   const shutdownHandlers: Array<() => void> = [];
   let controller: InstanceType<typeof CameraController>;
   class CameraController {
@@ -65,6 +74,7 @@ function harness(snapshot: { url: string } | undefined = { url: 'https://api.jun
   const client = {
     config: { camera: { ffmpegPath: 'ffmpeg' } },
     latestSnapshot: snapshot,
+    tls,
   };
   return {
     source: new JuneCameraSource(platform as never, client as never),
@@ -180,6 +190,21 @@ describe('JuneCameraSource session lifecycle', () => {
     await source.handleSnapshotRequest({} as never, vi.fn());
 
     expect(fetch).toHaveBeenCalledWith('https://api.junelife.com/media/image.jpe', expect.objectContaining({ redirect: 'error' }));
+  });
+
+  it('fetches a june-local frame with the oven server TLS settings', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(Buffer.from('jpeg')));
+    vi.stubGlobal('fetch', fetch);
+    const { source } = harness({ url: 'https://192.168.1.75/media/image.jpe' }, { ca: 'PEM', rejectUnauthorized: true });
+    const callback = vi.fn();
+
+    await source.handleSnapshotRequest({} as never, callback);
+
+    expect(fetch).toHaveBeenCalledWith('https://192.168.1.75/media/image.jpe', expect.objectContaining({
+      redirect: 'error',
+      dispatcher: expect.objectContaining({ options: { connect: { ca: 'PEM', rejectUnauthorized: true } } }),
+    }));
+    expect(callback).toHaveBeenCalledWith(undefined, Buffer.from('jpeg'));
   });
 
   it('shares one in-flight frame fetch across concurrent snapshot requests', async () => {

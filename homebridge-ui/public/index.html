@@ -61,7 +61,27 @@
       <img src="icon.png" alt="">
       <h4 class="mb-0">June Oven Pairing</h4>
     </div>
-    <p class="june-muted mb-3">This plugin pairs directly with your oven over June's cloud — you don't need the June phone app. Click below to start; instructions appear once pairing begins.</p>
+    <p class="june-muted mb-3">This plugin pairs directly with your oven — you don't need the June phone app. Pairing goes through June's cloud, or through the oven itself if it runs <a href="https://project-july.org" target="_blank" rel="noopener">Project July</a>'s local server (enter its address below). Click below to start; instructions appear once pairing begins.</p>
+    <details class="mb-3">
+      <summary>Project July local server (optional)</summary>
+      <div class="mt-2">
+        <div class="form-group">
+          <label for="pairEndpoint">Oven address</label>
+          <input id="pairEndpoint" type="text" class="form-control" placeholder="Leave blank to use June's cloud">
+          <small class="form-text june-muted june-help">Hostname or IP address of an oven running Project July's june-local server, such as 192.168.1.75 or june-oven.local. Add a port if needed, or start with <code>http://</code> to use the plain port-8080 listener. Leave blank to use June's cloud. See the <a href="https://project-july.org/setup/" target="_blank" rel="noopener">Project July setup guide</a>.</small>
+        </div>
+        <div class="form-group">
+          <label for="pairCaCert">CA certificate (PEM)</label>
+          <textarea id="pairCaCert" class="form-control" rows="3" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+          <small class="form-text june-muted june-help">Paste your Project July <code>ca.crt</code> so Homebridge trusts the oven's per-install certificate. Leave blank to use the system certificate store.</small>
+        </div>
+        <div class="form-check">
+          <input id="pairVerifySsl" type="checkbox" class="form-check-input" checked>
+          <label for="pairVerifySsl" class="form-check-label">Verify TLS certificate</label>
+        </div>
+        <small class="form-text june-muted june-help">Turn off only if the oven's certificate cannot be trusted any other way. Commands stay signed, but the connection could be intercepted on your network.</small>
+      </div>
+    </details>
     <button id="pairButton" class="btn btn-primary">Pair a new June oven</button>
   </div>
 
@@ -96,6 +116,9 @@
   const pairCard = document.getElementById('pairCard');
   const pairCode = document.getElementById('pairCode');
   const pairState = document.getElementById('pairState');
+  const pairEndpoint = document.getElementById('pairEndpoint');
+  const pairCaCert = document.getElementById('pairCaCert');
+  const pairVerifySsl = document.getElementById('pairVerifySsl');
   const ovenList = document.getElementById('ovenList');
   const duplicateWarning = document.getElementById('duplicateWarning');
   let currentConfig = [];
@@ -232,6 +255,24 @@
           </div>
 
           <hr>
+          <h6 class="mb-2">Project July Local Server</h6>
+          <div class="form-group">
+            <label>Oven Address</label>
+            <input type="text" class="form-control field-endpoint" value="${escapeHtml(oven.endpoint ?? '')}" placeholder="Leave blank to use June's cloud">
+            <small class="form-text june-muted june-help">Hostname or IP address of an oven running Project July's june-local server, with an optional port; start with <code>http://</code> for the plain port-8080 listener. Leave blank to use June's cloud. Restart Homebridge after changing the server settings.</small>
+          </div>
+          <div class="form-group">
+            <label>CA Certificate (PEM)</label>
+            <textarea class="form-control field-caCert" rows="3" placeholder="-----BEGIN CERTIFICATE-----">${escapeHtml(oven.caCert ?? '')}</textarea>
+            <small class="form-text june-muted june-help">Your Project July <code>ca.crt</code>, trusted on its own for this oven. Leave blank to use the system certificate store.</small>
+          </div>
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input field-verifySsl" ${oven.verifySsl !== false ? 'checked' : ''}>
+            <label class="form-check-label">Verify TLS certificate</label>
+          </div>
+          <small class="form-text june-muted june-help mb-3">Turn off only if the oven's certificate cannot be trusted any other way. Commands stay signed, but the connection could be intercepted on your network.</small>
+
+          <hr>
           <h6 class="mb-2">Cook Doorbell</h6>
           <div class="form-check">
             <input type="checkbox" class="form-check-input field-doorbellEnabled" ${oven.doorbell?.enabled ? 'checked' : ''}>
@@ -310,6 +351,9 @@
       ['.field-readySensor', 'readySensor', 'checked'],
       ['.field-doneSensor', 'doneSensor', 'checked'],
       ['.field-defaultMode', 'defaultMode', 'value'],
+      ['.field-endpoint', 'endpoint', 'value'],
+      ['.field-caCert', 'caCert', 'value'],
+      ['.field-verifySsl', 'verifySsl', 'checked'],
     ];
     for (const [selector, key, prop] of bindings) {
       const el = card.querySelector(selector);
@@ -479,7 +523,12 @@
     pairCard.classList.remove('d-none');
     try {
       const status = await withTimeout(
-        homebridge.request('/pair/begin', { deviceName: 'Homebridge June' }),
+        homebridge.request('/pair/begin', {
+          deviceName: 'Homebridge June',
+          endpoint: pairEndpoint.value.trim(),
+          caCert: pairCaCert.value.trim(),
+          verifySsl: pairVerifySsl.checked,
+        }),
         20000,
         'Timed out starting pairing. Try closing and reopening this settings panel (or refreshing the page), then retry.',
       );
@@ -560,7 +609,14 @@
     currentConfig[0].ovens = currentConfig[0].ovens || [];
     const index = currentConfig[0].ovens.findIndex(existing => existing.ovenId === oven.ovenId);
     if (index >= 0) {
-      currentConfig[0].ovens[index] = { ...currentConfig[0].ovens[index], ...oven };
+      const merged = { ...currentConfig[0].ovens[index], ...oven };
+      // Re-pairing replaces the server settings too: drop any the new pairing didn't use.
+      for (const key of ['endpoint', 'caCert', 'verifySsl']) {
+        if (!(key in oven)) {
+          delete merged[key];
+        }
+      }
+      currentConfig[0].ovens[index] = merged;
     } else {
       currentConfig[0].ovens.push(oven);
     }

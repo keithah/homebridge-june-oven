@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('./june-client', async () => {
   const { EventEmitter } = await import('events');
+  const { resolveServerSettings } = await vi.importActual<typeof import('./local-server')>('./local-server');
 
   class FakeJuneClient extends EventEmitter {
     static readonly instances: FakeJuneClient[] = [];
@@ -10,6 +11,8 @@ vi.mock('./june-client', async () => {
 
     constructor(config: any) {
       super();
+      // Like the real client, reject invalid server settings up front.
+      resolveServerSettings(config);
       this.config = {
         ...config,
         name: config.name || 'June',
@@ -289,6 +292,31 @@ describe('JunePlatform probe accessory registration', () => {
     const doorbell = published.find(accessory => accessory.displayName === 'Kitchen Doorbell');
     const controller = doorbell?.configureController.mock.calls[0][0];
     expect(controller.constructor.name).toBe('FakeDoorbellController');
+  });
+
+  it('skips an oven with invalid server settings and starts the others', async () => {
+    const { JunePlatform } = await import('./platform');
+    const { JuneClient } = await import('./june-client') as any;
+    JuneClient.instances.length = 0;
+    const { api, launch, registered } = createApi();
+    const log = { ...console, error: vi.fn() };
+    const oven = {
+      deviceId: 'device', deviceName: 'Homebridge', password: 'password', ed25519SeedHex: 'ab',
+      preheatSwitchName: '', readySensor: false, doneSensor: false,
+    };
+    new JunePlatform(log as never, {
+      platform: 'JuneOven',
+      ovens: [
+        { ...oven, ovenId: 'oven-1', name: 'Broken', endpoint: 'ftp://oven' },
+        { ...oven, ovenId: 'oven-2', name: 'Kitchen', endpoint: '192.168.1.75' },
+      ],
+    }, api as never);
+
+    launch();
+
+    expect(log.error).toHaveBeenCalledWith(expect.stringMatching(/^Skipping Broken: Invalid oven address/));
+    expect(registered.map(accessory => accessory.displayName)).toEqual(['Kitchen']);
+    expect(JuneClient.instances).toHaveLength(1);
   });
 
   it('stops every client during Homebridge shutdown', async () => {
