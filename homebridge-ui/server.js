@@ -15,7 +15,12 @@ class JuneUiServer extends HomebridgePluginUiServer {
 
   async beginPairing(payload) {
     try {
-      return await this.pairing.begin(payload && payload.deviceName ? payload.deviceName : 'Homebridge June');
+      const options = payload || {};
+      return await this.pairing.begin(options.deviceName || 'Homebridge June', {
+        endpoint: options.endpoint,
+        caCert: options.caCert,
+        verifySsl: options.verifySsl,
+      });
     } catch (error) {
       throw new RequestError(error instanceof Error ? error.message : String(error), { status: 500 });
     }
@@ -40,12 +45,13 @@ class JuneUiServer extends HomebridgePluginUiServer {
     if (!payload || !payload.oven) {
       throw new RequestError('Missing oven config.', { status: 400 });
     }
-    const client = new JuneClient(payload.oven, console);
+    let client;
     let telemetry = {};
-    client.on('telemetry', update => {
-      telemetry = { ...telemetry, ...update };
-    });
     try {
+      client = new JuneClient(payload.oven, console);
+      client.on('telemetry', update => {
+        telemetry = { ...telemetry, ...update };
+      });
       await client.fetchStatus();
     } catch (error) {
       throw new RequestError(error instanceof Error ? error.message : String(error), { status: 502 });

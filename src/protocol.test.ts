@@ -79,6 +79,57 @@ describe('normalizeOvenConfig new options', () => {
   });
 });
 
+describe('normalizeOvenConfig server URLs', () => {
+  const base = {
+    ovenId: 'o', deviceId: 'd', deviceName: 'n', password: 'p', ed25519SeedHex: 'ab',
+  };
+
+  it('keeps June cloud URLs when no endpoint is configured', () => {
+    const n = normalizeOvenConfig({ ...base, caCert: 'ignored without an endpoint', verifySsl: false });
+    expect(n).toMatchObject({
+      endpoint: '',
+      caCert: '',
+      baseUrl: 'https://api.junelife.com',
+      messagingUrl: 'https://messaging.junelife.com',
+      wsUrl: 'wss://messaging.junelife.com/1/messaging/websocket/companion',
+    });
+  });
+
+  it('derives every URL from a june-local endpoint', () => {
+    expect(normalizeOvenConfig({ ...base, endpoint: ' 192.168.1.75 ' })).toMatchObject({
+      endpoint: 'https://192.168.1.75',
+      verifySsl: true,
+      baseUrl: 'https://192.168.1.75',
+      messagingUrl: 'https://192.168.1.75',
+      wsUrl: 'wss://192.168.1.75/1/messaging/websocket/companion',
+    });
+    expect(normalizeOvenConfig({ ...base, endpoint: 'http://june-oven.local' })).toMatchObject({
+      baseUrl: 'http://june-oven.local:8080',
+      messagingUrl: 'http://june-oven.local:8080',
+      wsUrl: 'ws://june-oven.local:8080/1/messaging/websocket/companion',
+    });
+  });
+
+  it('lets explicit URL fields override the derived ones', () => {
+    const n = normalizeOvenConfig({
+      ...base,
+      endpoint: '192.168.1.75',
+      baseUrl: 'https://api.example',
+      messagingUrl: 'https://messaging.example',
+      wsUrl: 'wss://messaging.example/ws',
+    });
+    expect(n).toMatchObject({
+      baseUrl: 'https://api.example',
+      messagingUrl: 'https://messaging.example',
+      wsUrl: 'wss://messaging.example/ws',
+    });
+  });
+
+  it('rejects an invalid endpoint', () => {
+    expect(() => normalizeOvenConfig({ ...base, endpoint: 'ftp://oven' })).toThrow(/Invalid oven address/);
+  });
+});
+
 describe('signed frames', () => {
   it('uses the 72-byte fingerprint plus Ed25519 signature format', async () => {
     await sodium.ready;

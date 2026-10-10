@@ -1,3 +1,6 @@
+import type { Agent } from 'undici';
+import type { JuneTlsOptions } from './local-server';
+
 export const DEFAULT_HTTP_TIMEOUT_MS = 15_000;
 
 export function isRetryableHttpStatus(status: number): boolean {
@@ -16,9 +19,37 @@ interface TimedResponse<T> {
   body: T;
 }
 
+/**
+ * Request options plus TLS settings for a june-local server. Without `tls`
+ * the request goes through the global fetch exactly as before.
+ */
+export interface JuneRequestInit extends RequestInit {
+  tls?: JuneTlsOptions;
+}
+
+const dispatchers = new Map<string, Agent>();
+
+async function send(input: string | URL, init: RequestInit, tls: JuneTlsOptions | undefined): Promise<Response> {
+  if (!tls) {
+    return fetch(input, init);
+  }
+  // undici is only loaded for a june-local server with custom TLS settings. Its
+  // own fetch is used so the Agent always matches the fetch implementation,
+  // whichever undici release this Node version bundles for the global fetch.
+  const undici = await import('undici');
+  const key = `${tls.rejectUnauthorized}\n${tls.ca ?? ''}`;
+  let dispatcher = dispatchers.get(key);
+  if (!dispatcher) {
+    dispatcher = new undici.Agent({ connect: { ca: tls.ca, rejectUnauthorized: tls.rejectUnauthorized } });
+    dispatchers.set(key, dispatcher);
+  }
+  const undiciInit = { ...init, dispatcher } as Parameters<typeof undici.fetch>[1];
+  return undici.fetch(input, undiciInit) as unknown as Promise<Response>;
+}
+
 async function consumeWithTimeout<T>(
   input: string | URL,
-  init: RequestInit,
+  { tls, ...init }: JuneRequestInit,
   timeoutMs: number,
   consume: (response: Response) => Promise<T>,
 ): Promise<TimedResponse<T>> {
@@ -35,7 +66,7 @@ async function consumeWithTimeout<T>(
   }
 
   try {
-    const response = await fetch(input, { ...init, signal: controller.signal });
+    const response = await send(input, { ...init, signal: controller.signal }, tls);
     return { response, body: await consume(response) };
   } finally {
     clearTimeout(timer);
@@ -53,7 +84,7 @@ async function cancelResponseBody(response: Response): Promise<void> {
 
 export async function fetchWithTimeout(
   input: string | URL,
-  init: RequestInit = {},
+  init: JuneRequestInit = {},
   timeoutMs = DEFAULT_HTTP_TIMEOUT_MS,
 ): Promise<Response> {
   return (await consumeWithTimeout(input, init, timeoutMs, async response => response)).response;
@@ -61,7 +92,7 @@ export async function fetchWithTimeout(
 
 export async function fetchJsonWithTimeout(
   input: string | URL,
-  init: RequestInit = {},
+  init: JuneRequestInit = {},
   timeoutMs = DEFAULT_HTTP_TIMEOUT_MS,
 ): Promise<TimedResponse<unknown>> {
   return consumeWithTimeout(input, init, timeoutMs, async response => {
@@ -75,7 +106,7 @@ export async function fetchJsonWithTimeout(
 
 export async function fetchBufferWithTimeout(
   input: string | URL,
-  init: RequestInit = {},
+  init: JuneRequestInit = {},
   timeoutMs = DEFAULT_HTTP_TIMEOUT_MS,
   maxBytes = 10 * 1024 * 1024,
 ): Promise<TimedResponse<Buffer>> {

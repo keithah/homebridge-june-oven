@@ -18,7 +18,8 @@ import {
   signedFrame,
 } from './protocol';
 import { fetchJsonWithTimeout, isRetryableHttpStatus, JuneHttpError } from './http';
-import { parseCameraFrame, parseProbeTelemetry, type JuneSnapshot } from './protocol-decode';
+import { localTlsOptions, type JuneTlsOptions } from './local-server';
+import { parseCameraFrame, parseJuneStatus, parseProbeTelemetry, type JuneSnapshot } from './protocol-decode';
 
 export interface JuneTelemetry {
   currentTempC?: number;
@@ -64,6 +65,8 @@ export declare interface JuneClient {
 
 export class JuneClient extends EventEmitter {
   public readonly config: NormalizedJuneConfig;
+  /** TLS settings for a local HTTPS endpoint; undefined uses the defaults. */
+  public readonly tls?: JuneTlsOptions;
   private ws?: WebSocket;
   private keepalive?: NodeJS.Timeout;
   private reconnect?: NodeJS.Timeout;
@@ -92,6 +95,7 @@ export class JuneClient extends EventEmitter {
   constructor(config: JuneOvenConfig, private readonly log: Pick<Console, 'debug' | 'warn' | 'error'> = console) {
     super();
     this.config = normalizeOvenConfig(config);
+    this.tls = localTlsOptions(this.config.endpoint, this.config.caCert, this.config.verifySsl);
   }
 
   public async start(): Promise<void> {
@@ -184,6 +188,7 @@ export class JuneClient extends EventEmitter {
         version: JUNE_APP_VERSION,
         platform_version: JUNE_PLATFORM_VERSION,
       }),
+      tls: this.tls,
     });
     if (!response.ok) {
       throw new JuneHttpError('Token refresh failed', response.status);
@@ -212,6 +217,7 @@ export class JuneClient extends EventEmitter {
   private async performFetchStatus(autoRefresh: boolean): Promise<void> {
     const { response, body } = await fetchJsonWithTimeout(`${this.config.messagingUrl}/1/messaging/device/${this.config.ovenId}/status`, {
       headers: { Authorization: `Bearer ${this.config.accessToken}` },
+      tls: this.tls,
     });
     if (response.status === 401 && autoRefresh) {
       await this.refreshToken();
@@ -224,17 +230,14 @@ export class JuneClient extends EventEmitter {
     if (!statusValue || typeof statusValue !== 'object' || Array.isArray(statusValue)) {
       throw new Error('Invalid June status response.');
     }
-    const status = statusValue as {
-      connection_state?: string;
-      device_state?: { data?: { state?: string } };
-      cook_plan?: { data?: { food?: { plan?: { steps?: Array<{ temperature_cavity?: number }> } } } };
-    };
-    const active = status.device_state?.data?.state === 'active';
-    const targetMilliC = status.cook_plan?.data?.food?.plan?.steps?.find(step => typeof step.temperature_cavity === 'number')?.temperature_cavity;
+    const { active, targetMilliC, connectionState } = parseJuneStatus(statusValue as Record<string, unknown>);
+    // june-local keeps serving the last plan after a cook ends, so only trust
+    // its plan while the oven is active.
+    const planCurrent = active || !this.config.endpoint;
     this.applyTelemetry({
       active,
-      targetTempC: typeof targetMilliC === 'number' ? milliCToCelsius(targetMilliC) : undefined,
-      connectionState: status.connection_state,
+      targetTempC: planCurrent && typeof targetMilliC === 'number' ? milliCToCelsius(targetMilliC) : undefined,
+      connectionState,
     });
   }
 
@@ -251,6 +254,7 @@ export class JuneClient extends EventEmitter {
     const socket = new WebSocket(this.config.wsUrl, {
       headers: { Authorization: `Bearer ${this.config.accessToken}`, 'User-Agent': JUNE_USER_AGENT },
       perMessageDeflate: false,
+      ...this.tls,
     });
     this.ws = socket;
     const connecting = new Promise<void>((resolve, reject) => {
@@ -381,7 +385,7 @@ export class JuneClient extends EventEmitter {
       return;
     }
     if (frame.message_code === 10011) {
-      const snapshot = parseCameraFrame(data);
+      const snapshot = parseCameraFrame(data, this.config.endpoint);
       if (snapshot) {
         this.snapshot = snapshot;
         this.snapshotAt = Date.now();

@@ -11,7 +11,7 @@ vi.mock('ws', async () => {
     public readyState = FakeWebSocket.CONNECTING;
     public send = vi.fn();
 
-    constructor() {
+    constructor(public readonly url?: string, public readonly options?: Record<string, unknown>) {
       super();
       instances.push(this);
     }
@@ -35,10 +35,10 @@ function sockets(): any[] {
   return (globalThis as any).__juneTestSockets;
 }
 
-function client(): JuneClient {
+function client(extra: Record<string, unknown> = {}): JuneClient {
   return new JuneClient({
     ovenId: 'oven', deviceId: 'device', deviceName: 'Homebridge', password: 'password',
-    ed25519SeedHex: 'ab'.repeat(32),
+    ed25519SeedHex: 'ab'.repeat(32), ...extra,
   }, { debug() {}, warn() {}, error() {} });
 }
 
@@ -56,6 +56,20 @@ describe('JuneClient lifecycle', () => {
     expect(calculateRetryDelay(1, () => 0)).toBe(500);
     expect(calculateRetryDelay(3, () => 0.5)).toBe(4_000);
     expect(calculateRetryDelay(20, () => 1)).toBe(120_000);
+  });
+
+  it('opens the June cloud socket without TLS overrides', () => {
+    void (client() as any).connect();
+
+    expect(sockets()[0].url).toBe('wss://messaging.junelife.com/1/messaging/websocket/companion');
+    expect(Object.keys(sockets()[0].options).sort()).toEqual(['headers', 'perMessageDeflate']);
+  });
+
+  it('opens the june-local socket with its TLS settings', () => {
+    void (client({ endpoint: '192.168.1.75:8443', verifySsl: false }) as any).connect();
+
+    expect(sockets()[0].url).toBe('wss://192.168.1.75:8443/1/messaging/websocket/companion');
+    expect(sockets()[0].options).toMatchObject({ perMessageDeflate: false, rejectUnauthorized: false });
   });
 
   it('shares one socket while a connection is in progress', () => {

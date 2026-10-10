@@ -1,11 +1,6 @@
 import sodium from 'libsodium-wrappers';
-import {
-  JUNE_API_URL,
-  JUNE_CLIENT_ID,
-  JUNE_CLIENT_SECRET,
-  JUNE_MESSAGING_URL,
-  JUNE_WS_URL,
-} from './settings';
+import { JUNE_CLIENT_ID, JUNE_CLIENT_SECRET } from './settings';
+import { resolveServerSettings } from './local-server';
 
 export const MC_PREHEAT = 11002;
 export const MC_CANCEL = 11004;
@@ -61,6 +56,12 @@ export interface JuneOvenConfig {
   refreshToken?: string;
   clientId?: string;
   clientSecret?: string;
+  /** Project July june-local server: the oven's host or IP and optional port. Empty uses June's cloud. */
+  endpoint?: string;
+  /** PEM CA certificate to trust, on its own, for a local HTTPS endpoint. */
+  caCert?: string;
+  /** Verify a local HTTPS endpoint's certificate (default true). */
+  verifySsl?: boolean;
   baseUrl?: string;
   messagingUrl?: string;
   wsUrl?: string;
@@ -79,6 +80,9 @@ export interface NormalizedJuneConfig extends JuneOvenConfig {
   refreshToken: string;
   clientId: string;
   clientSecret: string;
+  endpoint: string;
+  caCert: string;
+  verifySsl: boolean;
   baseUrl: string;
   messagingUrl: string;
   wsUrl: string;
@@ -115,6 +119,8 @@ export function parseJuneTokenResponse(value: unknown): { accessToken: string; r
 let lastOrder = 0;
 
 export function normalizeOvenConfig(config: JuneOvenConfig): NormalizedJuneConfig {
+  // A local endpoint replaces every June URL; explicit URL fields still win.
+  const server = resolveServerSettings(config);
   return {
     ...config,
     name: config.name || 'June',
@@ -125,9 +131,12 @@ export function normalizeOvenConfig(config: JuneOvenConfig): NormalizedJuneConfi
     refreshToken: config.refreshToken || '',
     clientId: config.clientId || JUNE_CLIENT_ID,
     clientSecret: config.clientSecret || JUNE_CLIENT_SECRET,
-    baseUrl: config.baseUrl || JUNE_API_URL,
-    messagingUrl: config.messagingUrl || JUNE_MESSAGING_URL,
-    wsUrl: config.wsUrl || JUNE_WS_URL,
+    endpoint: server.endpoint,
+    caCert: server.caCert,
+    verifySsl: server.verifySsl,
+    baseUrl: config.baseUrl || server.endpoints.apiUrl,
+    messagingUrl: config.messagingUrl || server.endpoints.messagingUrl,
+    wsUrl: config.wsUrl || server.endpoints.wsUrl,
     doorbell: {
       enabled: config.doorbell?.enabled ?? false,
       name: config.doorbell?.name || 'June Doorbell',

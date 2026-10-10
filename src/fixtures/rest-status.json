@@ -1,0 +1,127 @@
+{
+  "june_local_idle": {
+    "connection_state": "connected",
+    "ha_connection_state": "online",
+    "device_state": {
+      "state": "idle"
+    },
+    "device_state_data": {
+      "data": {
+        "state": "idle"
+      }
+    },
+    "cook_plan": null,
+    "cook_plan_data": null
+  },
+  "june_local_active": {
+    "connection_state": "connected",
+    "ha_connection_state": "online",
+    "device_state": {
+      "state": "active"
+    },
+    "device_state_data": {
+      "data": {
+        "state": "active"
+      }
+    },
+    "cook_plan": {
+      "food": {
+        "name": "proof",
+        "plan": {
+          "id": 114,
+          "steps": [
+            {
+              "bottom_power_0": 20,
+              "conv_0": 0,
+              "conv_1": 0,
+              "cook_mode": "proof",
+              "id": 0,
+              "presentation_type": "cook_unbound",
+              "temperature_accessory": 0,
+              "temperature_cavity": 26667,
+              "top_power_0": 20,
+              "top_power_1": 20
+            }
+          ]
+        },
+        "preset_version": 0
+      },
+      "session_id": "952e0f1b-83db-432c-98b7-8027deb6f00d",
+      "step_state": {
+        "step_id": 0,
+        "step_index": 0
+      },
+      "temperature_unit": "F"
+    },
+    "cook_plan_data": {
+      "data": {
+        "food": {
+          "name": "proof",
+          "plan": {
+            "id": 114,
+            "steps": [
+              {
+                "bottom_power_0": 20,
+                "conv_0": 0,
+                "conv_1": 0,
+                "cook_mode": "proof",
+                "id": 0,
+                "presentation_type": "cook_unbound",
+                "temperature_accessory": 0,
+                "temperature_cavity": 26667,
+                "top_power_0": 20,
+                "top_power_1": 20
+              }
+            ]
+          },
+          "preset_version": 0
+        },
+        "session_id": "952e0f1b-83db-432c-98b7-8027deb6f00d",
+        "step_state": {
+          "step_id": 0,
+          "step_index": 0
+        },
+        "temperature_unit": "F"
+      }
+    }
+  },
+  "cloud_active": {
+    "connection_state": "online",
+    "device_state": {
+      "data": {
+        "state": "active"
+      }
+    },
+    "cook_plan": {
+      "data": {
+        "food": {
+          "name": "proof",
+          "plan": {
+            "id": 114,
+            "steps": [
+              {
+                "bottom_power_0": 20,
+                "conv_0": 0,
+                "conv_1": 0,
+                "cook_mode": "proof",
+                "id": 0,
+                "presentation_type": "cook_unbound",
+                "temperature_accessory": 0,
+                "temperature_cavity": 26667,
+                "top_power_0": 20,
+                "top_power_1": 20
+              }
+            ]
+          },
+          "preset_version": 0
+        },
+        "session_id": "952e0f1b-83db-432c-98b7-8027deb6f00d",
+        "step_state": {
+          "step_id": 0,
+          "step_index": 0
+        },
+        "temperature_unit": "F"
+      }
+    }
+  }
+}

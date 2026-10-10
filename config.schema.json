@@ -66,6 +66,22 @@
                 { "title": "Celsius", "enum": ["C"] }
               ]
             },
+            "endpoint": {
+              "title": "Project July Local Server",
+              "type": "string",
+              "description": "Hostname or IP address of an oven running Project July's june-local server (e.g. 192.168.1.75 or june-oven.local), with an optional port. Start with http:// to use the plain port-8080 listener. Leave blank to use June's cloud."
+            },
+            "caCert": {
+              "title": "Local Server CA Certificate (PEM)",
+              "type": "string",
+              "description": "Your Project July ca.crt, trusted on its own for this oven's local server. Leave blank to use the system certificate store. Ignored without a local server."
+            },
+            "verifySsl": {
+              "title": "Verify Local Server TLS Certificate",
+              "type": "boolean",
+              "default": true,
+              "description": "Turn off only if the oven's certificate cannot be trusted any other way. Commands stay signed, but the connection could be intercepted on your network. Ignored without a local server."
+            },
             "doorbell": {
               "title": "Cook Doorbell",
               "type": "object",
@@ -140,6 +156,9 @@
         "ovens[].defaultMode",
         "ovens[].defaultTempF",
         "ovens[].tempUnit",
+        "ovens[].endpoint",
+        { "key": "ovens[].caCert", "type": "textarea" },
+        "ovens[].verifySsl",
         "ovens[].doorbell.enabled",
         "ovens[].doorbell.name",
         "ovens[].doorbell.triggers.done",

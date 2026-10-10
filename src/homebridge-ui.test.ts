@@ -51,6 +51,18 @@ describe('June Oven custom UI configuration', () => {
     expect(html).not.toContain('homebridge.showSchemaForm');
   });
 
+  test('offers Project July server settings for pairing and for each oven', async () => {
+    const html = await readFile('homebridge-ui/public/index.html', 'utf8');
+
+    expect(html).toContain('id="pairEndpoint"');
+    expect(html).toContain('id="pairCaCert"');
+    expect(html).toContain('id="pairVerifySsl"');
+    expect(html).toContain('endpoint: pairEndpoint.value.trim()');
+    expect(html).toContain("['.field-endpoint', 'endpoint', 'value']");
+    expect(html).toContain("['.field-caCert', 'caCert', 'value']");
+    expect(html).toContain("['.field-verifySsl', 'verifySsl', 'checked']");
+  });
+
   test('serializes pairing polls instead of starting overlapping intervals', async () => {
     const html = await readFile('homebridge-ui/public/index.html', 'utf8');
 

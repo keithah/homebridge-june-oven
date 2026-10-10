@@ -3,15 +3,14 @@ import { EventEmitter } from 'events';
 import sodium from 'libsodium-wrappers';
 import WebSocket from 'ws';
 import { fetchJsonWithTimeout, isRetryableHttpStatus } from './http';
+import { checkLocalServer, resolveServerSettings, type JuneServerSettings, type ResolvedJuneServer } from './local-server';
 import { parseJuneTokenResponse } from './protocol';
 import {
-  JUNE_API_URL,
   JUNE_APP_VERSION,
   JUNE_CLIENT_ID,
   JUNE_CLIENT_SECRET,
   JUNE_PLATFORM_VERSION,
   JUNE_USER_AGENT,
-  JUNE_WS_URL,
   SRP_G,
   SRP_N_HEX,
 } from './settings';
@@ -65,6 +64,10 @@ export interface PairedOvenIdentity {
   refreshToken: string;
   clientId: string;
   clientSecret: string;
+  /** Only set when paired through a Project July june-local server. */
+  endpoint?: string;
+  caCert?: string;
+  verifySsl?: boolean;
 }
 
 export function damm(input: string): number {
@@ -170,7 +173,11 @@ export class JunePairingSession extends EventEmitter {
   private deadline?: NodeJS.Timeout;
   private closed = false;
 
-  constructor(id: string, private readonly deviceName = 'Homebridge June') {
+  constructor(
+    id: string,
+    private readonly deviceName = 'Homebridge June',
+    private readonly server: ResolvedJuneServer = resolveServerSettings(),
+  ) {
     super();
     this.status = { id, state: 'starting' };
   }
@@ -184,6 +191,10 @@ export class JunePairingSession extends EventEmitter {
     try {
       await sodium.ready;
       this.assertOpen();
+      if (this.server.endpoints.local) {
+        await checkLocalServer(this.server.endpoint, this.server.tls);
+        this.assertOpen();
+      }
       const registration = await this.registerDevice();
       this.assertOpen();
       this.registration = registration;
@@ -247,7 +258,7 @@ export class JunePairingSession extends EventEmitter {
   private async registerDevice(): Promise<DeviceRegistration> {
     const deviceId = randomBytes(16).toString('hex');
     const password = randomBytes(16).toString('hex');
-    const { response, body } = await fetchJsonWithTimeout(`${JUNE_API_URL}/2/devices/register`, {
+    const { response, body } = await fetchJsonWithTimeout(`${this.server.endpoints.apiUrl}/2/devices/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'User-Agent': JUNE_USER_AGENT },
       body: JSON.stringify({
@@ -261,6 +272,7 @@ export class JunePairingSession extends EventEmitter {
         version: JUNE_APP_VERSION,
         platform_version: JUNE_PLATFORM_VERSION,
       }),
+      tls: this.server.tls,
     });
     if (!response.ok) {
       throw new Error(`Device registration failed: ${response.status}`);
@@ -270,9 +282,10 @@ export class JunePairingSession extends EventEmitter {
   }
 
   private async requestPairingCode(accessToken: string): Promise<{ code: string }> {
-    const { response, body } = await fetchJsonWithTimeout(`${JUNE_API_URL}/2/devices/pairing`, {
+    const { response, body } = await fetchJsonWithTimeout(`${this.server.endpoints.apiUrl}/2/devices/pairing`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${accessToken}`, 'User-Agent': JUNE_USER_AGENT },
+      tls: this.server.tls,
     });
     if (!response.ok) {
       throw new Error(`Pairing code request failed: ${response.status}`);
@@ -285,9 +298,10 @@ export class JunePairingSession extends EventEmitter {
   }
 
   private openSocket(accessToken: string): void {
-    this.ws = new WebSocket(JUNE_WS_URL, {
+    this.ws = new WebSocket(this.server.endpoints.wsUrl, {
       headers: { Authorization: `Bearer ${accessToken}`, 'User-Agent': JUNE_USER_AGENT },
       perMessageDeflate: false,
+      ...this.server.tls,
     });
     this.ws.on('message', message => this.handleSocketMessage(message.toString()).catch(error => this.fail(error)));
     this.ws.on('error', error => this.fail(error));
@@ -327,7 +341,7 @@ export class JunePairingSession extends EventEmitter {
     };
     const nonce = randomBytes(24);
     const encrypted = sodium.crypto_secretbox_easy(Buffer.from(JSON.stringify(companionInfo)), nonce, key);
-    const { response } = await fetchJsonWithTimeout(`${JUNE_API_URL}/2/devices/pairing/${this.serverCode}/companion`, {
+    const { response } = await fetchJsonWithTimeout(`${this.server.endpoints.apiUrl}/2/devices/pairing/${this.serverCode}/companion`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.registration.accessToken}`,
@@ -341,6 +355,7 @@ export class JunePairingSession extends EventEmitter {
           companion_info: Buffer.concat([nonce, Buffer.from(encrypted)]).toString('base64'),
         },
       }),
+      tls: this.server.tls,
     });
     if (!response.ok) {
       throw new Error(`Posting companion key failed: ${response.status}`);
@@ -359,8 +374,9 @@ export class JunePairingSession extends EventEmitter {
       this.assertOpen();
       await new Promise(resolve => setTimeout(resolve, calculateAssociationDelay(attempt)));
       this.assertOpen();
-      const { response, body: bodyValue } = await fetchJsonWithTimeout(`${JUNE_API_URL}/2/devices/${this.registration.deviceId}/associated`, {
+      const { response, body: bodyValue } = await fetchJsonWithTimeout(`${this.server.endpoints.apiUrl}/2/devices/${this.registration.deviceId}/associated`, {
         headers: { Authorization: `Bearer ${this.registration.accessToken}`, 'User-Agent': JUNE_USER_AGENT },
+        tls: this.server.tls,
       });
       if (!response.ok) {
         if (!isRetryableHttpStatus(response.status)) {
@@ -398,6 +414,9 @@ export class JunePairingSession extends EventEmitter {
         refreshToken: this.registration.refreshToken,
         clientId: JUNE_CLIENT_ID,
         clientSecret: JUNE_CLIENT_SECRET,
+        ...(this.server.endpoint
+          ? { endpoint: this.server.endpoint, caCert: this.server.caCert, verifySsl: this.server.verifySsl }
+          : {}),
       };
       this.setState('paired');
       this.close();
@@ -418,22 +437,24 @@ export class JunePairingSession extends EventEmitter {
 export class PairingManager {
   private readonly sessions = new Map<string, JunePairingSession>();
   private readonly evictionTimers = new Map<string, NodeJS.Timeout>();
-  private readonly sessionFactory: (id: string, deviceName?: string) => JunePairingSession;
+  private readonly sessionFactory: (id: string, deviceName?: string, server?: ResolvedJuneServer) => JunePairingSession;
   private readonly terminalTtlMs: number;
   private readonly maxActiveSessions: number;
   private readonly statusListeners = new Map<string, (status: PairingStatus) => void>();
 
   constructor(options: {
-    sessionFactory?: (id: string, deviceName?: string) => JunePairingSession;
+    sessionFactory?: (id: string, deviceName?: string, server?: ResolvedJuneServer) => JunePairingSession;
     terminalTtlMs?: number;
     maxActiveSessions?: number;
   } = {}) {
-    this.sessionFactory = options.sessionFactory ?? ((id, deviceName) => new JunePairingSession(id, deviceName));
+    this.sessionFactory = options.sessionFactory ?? ((id, deviceName, server) => new JunePairingSession(id, deviceName, server));
     this.terminalTtlMs = options.terminalTtlMs ?? 5 * 60_000;
     this.maxActiveSessions = options.maxActiveSessions ?? 1;
   }
 
-  public async begin(deviceName?: string): Promise<PairingStatus> {
+  public async begin(deviceName?: string, settings?: JuneServerSettings): Promise<PairingStatus> {
+    // Reject an invalid endpoint or CA certificate before touching any session.
+    const server = resolveServerSettings(settings);
     // A new begin() supersedes any lingering active session (oldest first) so a
     // user who lost the previous pairing id — e.g. reloaded the config UI, or
     // the first attempt stalled — can always retry, while still capping the
@@ -450,7 +471,7 @@ export class PairingManager {
       this.remove(oldest, session);
     }
     const id = randomBytes(8).toString('hex');
-    const session = this.sessionFactory(id, deviceName);
+    const session = this.sessionFactory(id, deviceName, server);
     this.sessions.set(id, session);
     const statusListener = (status: PairingStatus) => {
       if (this.sessions.get(id) !== session) {

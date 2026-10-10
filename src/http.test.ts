@@ -1,5 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchJsonWithTimeout, fetchWithTimeout, isRetryableHttpStatus, JuneHttpError, readResponseBuffer } from './http';
+
+const undici = vi.hoisted(() => ({
+  agents: [] as Array<{ options: unknown }>,
+  fetch: vi.fn(),
+}));
+vi.mock('undici', () => ({
+  Agent: class {
+    constructor(public readonly options: unknown) {
+      undici.agents.push(this);
+    }
+  },
+  fetch: undici.fetch,
+}));
+
+import { fetchBufferWithTimeout, fetchJsonWithTimeout, fetchWithTimeout, isRetryableHttpStatus, JuneHttpError, readResponseBuffer } from './http';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -58,6 +72,44 @@ describe('response-consuming timeout helpers', () => {
 
     expect(result.response.status).toBe(503);
     expect(cancel).toHaveBeenCalledOnce();
+  });
+});
+
+describe('june-local TLS settings', () => {
+  it('leaves requests without TLS settings on the global fetch', async () => {
+    const fetch = vi.fn(async () => new Response('{}'));
+    vi.stubGlobal('fetch', fetch);
+
+    await fetchJsonWithTimeout('https://api.junelife.com/2/devices/register', { method: 'POST', tls: undefined });
+
+    expect(undici.fetch).not.toHaveBeenCalled();
+    const init = (fetch.mock.calls[0] as unknown[])[1] as Record<string, unknown>;
+    expect(Object.keys(init).sort()).toEqual(['method', 'signal']);
+  });
+
+  it('sends requests with TLS settings through one shared undici Agent', async () => {
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    undici.fetch.mockImplementation(async (url: string) => new Response(url.endsWith('.jpg') ? Buffer.from('jpeg') : '{}'));
+    const tls = { ca: 'PEM', rejectUnauthorized: true };
+
+    await fetchJsonWithTimeout('https://192.168.1.75/local/status', { tls });
+    const { body } = await fetchBufferWithTimeout('https://192.168.1.75/media/a.jpg', { redirect: 'error', tls: { ...tls } });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(body.toString()).toBe('jpeg');
+    expect(undici.agents).toHaveLength(1);
+    expect(undici.agents[0].options).toEqual({ connect: { ca: 'PEM', rejectUnauthorized: true } });
+    expect(undici.fetch).toHaveBeenLastCalledWith('https://192.168.1.75/media/a.jpg', expect.objectContaining({
+      redirect: 'error',
+      dispatcher: undici.agents[0],
+      signal: expect.any(AbortSignal),
+    }));
+    expect('tls' in undici.fetch.mock.calls[1][1]).toBe(false);
+
+    await fetchJsonWithTimeout('https://192.168.1.75/local/status', { tls: { rejectUnauthorized: false } });
+    expect(undici.agents).toHaveLength(2);
+    expect(undici.agents[1].options).toEqual({ connect: { ca: undefined, rejectUnauthorized: false } });
   });
 });
 
